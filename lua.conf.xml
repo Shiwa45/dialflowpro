@@ -1,0 +1,6 @@
+<configuration name="lua.conf" description="LUA Configuration">
+  <settings>
+    <!-- DialFlow script directory -->
+    <param name="script-directory" value="/opt/dialflow/scripts/?.lua"/>
+  </settings>
+</configuration>

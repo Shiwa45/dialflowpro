@@ -1,0 +1,66 @@
+# Django & DRF
+Django==5.1.5
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.4.0
+
+# Database & Multi-tenancy
+psycopg[binary]
+django-tenants==3.7.0
+
+# Async & WebSockets
+channels==4.2.0
+channels-redis==4.2.1
+daphne==4.1.2
+
+# Celery
+celery==5.4.0
+django-celery-beat==2.8.0
+django-celery-results==2.5.1
+redis==5.2.1
+
+# FreeSWITCH ESL
+greenswitch==0.0.19
+
+# SMS Gateways (optional - install as needed)
+# twilio>=8.0.0  # Twilio SMS
+# plivo>=4.0.0   # Plivo SMS
+# vonage>=3.0.0  # Nexmo/Vonage SMS
+
+# Configuration & Utilities
+django-environ==0.11.2
+django-cors-headers==4.6.0
+django-filter==24.3
+django-countries==7.6.1
+django-ordered-model==3.7.4
+phonenumbers==8.13.50
+django-phonenumber-field==8.0.0
+
+# Storage (for later phases - S3)
+boto3==1.35.96
+django-storages==1.14.4
+
+# Email
+django-anymail[sendgrid]==13.0
+
+# Development
+django-debug-toolbar==4.4.6
+
+# Production
+gunicorn==23.0.0
+whitenoise==6.9.0
+
+# Monitoring
+sentry-sdk==2.21.0
+
+# Testing
+pytest==8.3.4
+pytest-django==4.9.0
+pytest-asyncio==0.24.0
+fakeredis==2.26.2
+factory-boy==3.3.1
+
+# Code Quality
+ruff==0.8.5
+mypy==1.14.0
+django-stubs==5.1.2
+djangorestframework-stubs==3.15.1
