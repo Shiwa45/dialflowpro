@@ -13,4 +13,6 @@ router.register(r'members', views.QueueMemberViewSet, basename='member')
 
 urlpatterns = [
     path('', include(router.urls)),
+    # FreeSWITCH webhook — called by Lua script when a predictive call is answered
+    path('route-call/', views.route_call, name='route_call'),
 ]

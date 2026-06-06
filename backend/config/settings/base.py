@@ -153,6 +153,11 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
+# Timezone used to evaluate campaign daily calling-hours (daily_start_time /
+# daily_stop_time) and day-of-week flags. DB stores UTC; calling windows are
+# wall-clock in this zone. Override via env for other regions.
+CAMPAIGN_TIMEZONE = env('CAMPAIGN_TIMEZONE', default='Asia/Kolkata')
+
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
@@ -232,6 +237,14 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+
+# Periodic tasks — campaign heartbeat fires every minute
+CELERY_BEAT_SCHEDULE = {
+    'campaign-running-every-minute': {
+        'task': 'dialer_campaign.campaign_running',
+        'schedule': 60.0,  # seconds; override via HEARTBEAT_MIN env var
+    },
+}
 
 
 # FreeSWITCH Configuration

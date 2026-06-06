@@ -1,99 +1,169 @@
-import { useEffect, useState } from 'react'
-import { useAgent } from '@/hooks/useAgent'
+import { useEffect } from 'react'
+import { useAgentDesktop } from '@/hooks/useAgentDesktop'
 import { Softphone } from '@/components/agent/Softphone'
 import { IncomingCallPanel } from '@/components/agent/IncomingCallPanel'
+import { ActiveCallPanel } from '@/components/agent/ActiveCallPanel'
 import { CustomerInfoPanel } from '@/components/agent/CustomerInfoPanel'
 import { MetricsBar } from '@/components/agent/MetricsBar'
 import { BottomBar } from '@/components/agent/BottomBar'
-import { Phone, Clock, PhoneIncoming, Timer, TrendingUp } from 'lucide-react'
+import { WrapUpPanel } from '@/components/agent/WrapUpPanel'
+import { AgentStatus } from '@/types'
+import {
+  Phone,
+  Wifi,
+  WifiOff,
+  Loader2,
+  LogIn,
+} from 'lucide-react'
 
 export function AgentPanel() {
-  const { agent, loading } = useAgent()
-  const [callDuration, setCallDuration] = useState(0)
+  const {
+    agent,
+    activeCall,
+    wsStatus,
+    isConnected,
+    todayStats,
+    queues,
+    notification,
+    login,
+  } = useAgentDesktop()
 
-  // Timer for active call
+  // Prevent accidental page close during active call
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (agent?.state === 'In a queue call') {
-        setCallDuration(prev => prev + 1)
-      } else {
-        setCallDuration(0)
+    const handler = (e: BeforeUnloadEvent) => {
+      if (activeCall && activeCall.state !== 'idle') {
+        e.preventDefault()
+        e.returnValue = ''
       }
-    }, 1000)
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [activeCall])
 
-    return () => clearInterval(interval)
-  }, [agent?.state])
-
-  if (loading) {
+  // ── Loading state ──
+  if (!agent) {
     return (
       <div className="h-screen bg-[#0A0E1A] flex items-center justify-center">
-        <div className="text-white">Loading...</div>
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+          <span className="text-gray-400 text-sm">Connecting to agent desktop…</span>
+        </div>
       </div>
     )
   }
 
+  // ── Logged out state ──
+  if (agent.status === AgentStatus.LOGGED_OUT) {
+    return (
+      <div className="h-screen bg-[#0A0E1A] flex items-center justify-center">
+        <div className="bg-[#111827] border border-gray-800 rounded-2xl p-10 max-w-md w-full text-center">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+            <Phone className="w-8 h-8 text-blue-400" />
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-2">Agent Desktop</h1>
+          <p className="text-gray-400 text-sm mb-2">{agent.name}</p>
+          <p className="text-gray-500 text-xs mb-8">
+            Extension {agent.sip_extension || '—'}
+          </p>
+
+          <button
+            onClick={login}
+            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 px-6 rounded-xl transition-colors"
+          >
+            <LogIn className="w-5 h-5" />
+            Go Available
+          </button>
+
+          <div className="mt-6 flex items-center justify-center gap-2 text-xs">
+            {isConnected ? (
+              <>
+                <Wifi className="w-3 h-3 text-green-500" />
+                <span className="text-green-500">Connected</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3 h-3 text-red-500" />
+                <span className="text-red-400">{wsStatus}</span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Determine main content panel ──
+  const renderMainContent = () => {
+    if (!activeCall || activeCall.state === 'idle') {
+      return (
+        <div className="flex-1 flex items-center justify-center bg-[#0A0E1A]">
+          <div className="text-center">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center">
+              <Phone className="w-10 h-10 text-gray-600" />
+            </div>
+            <h2 className="text-xl font-semibold text-gray-400 mb-2">Ready for calls</h2>
+            <p className="text-sm text-gray-600">
+              {queues.length > 0
+                ? `Listening on ${queues.length} queue${queues.length > 1 ? 's' : ''}`
+                : 'No queues assigned'}
+            </p>
+          </div>
+        </div>
+      )
+    }
+
+    if (activeCall.state === 'ringing') {
+      return <IncomingCallPanel />
+    }
+
+    if (activeCall.state === 'wrap_up') {
+      return <WrapUpPanel />
+    }
+
+    // active, held, transferring
+    return <ActiveCallPanel />
+  }
+
   return (
-    <div className="h-screen bg-[#0A0E1A] flex flex-col">
-      {/* Top Header */}
-      <header className="h-16 bg-[#111827] border-b border-gray-800 px-6 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Phone className="w-5 h-5 text-blue-500" />
-            <span className="text-white font-semibold">Agent Desktop</span>
-          </div>
-          
-          <div className="h-6 w-px bg-gray-700" />
-          
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${
-              agent?.status === 1 ? 'bg-green-500' : 'bg-gray-500'
-            }`} />
-            <span className="text-sm text-gray-300">
-              {agent?.status === 1 ? 'Available' : 'Unavailable'}
-            </span>
-          </div>
-          
-          <div className="flex items-center gap-2 text-sm text-gray-400">
-            <Clock className="w-4 h-4" />
-            <span>{formatTime(callDuration)}</span>
-          </div>
+    <div className="h-screen bg-[#0A0E1A] flex flex-col overflow-hidden select-none">
+      {/* ── Notification toast ── */}
+      {notification && (
+        <div
+          className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-xl text-sm font-medium shadow-xl transition-all animate-[slideDown_0.3s_ease] ${
+            notification.type === 'error'
+              ? 'bg-red-500/90 text-white'
+              : notification.type === 'success'
+                ? 'bg-green-500/90 text-white'
+                : 'bg-blue-500/90 text-white'
+          }`}
+        >
+          {notification.message}
         </div>
+      )}
 
-        <div className="flex items-center gap-4">
-          <button className="p-2 hover:bg-gray-700 rounded">
-            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-            </svg>
-          </button>
-          <button className="p-2 hover:bg-gray-700 rounded">
-            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </button>
-        </div>
-      </header>
-
-      {/* Metrics Bar */}
+      {/* ── Metrics bar (top) ── */}
       <MetricsBar />
 
-      {/* Main 3-Column Layout */}
-      <div className="flex-1 grid grid-cols-[400px_1fr_450px] min-h-0">
-        <Softphone />
-        <IncomingCallPanel />
-        <CustomerInfoPanel />
+      {/* ── Main 3-column layout ── */}
+      <div className="flex-1 flex min-h-0">
+        {/* Left — Softphone */}
+        <div className="w-80 flex-shrink-0">
+          <Softphone />
+        </div>
+
+        {/* Center — Call content */}
+        {renderMainContent()}
+
+        {/* Right — Customer Info (only during active/held/wrap-up call) */}
+        {activeCall && activeCall.state !== 'idle' && activeCall.state !== 'ringing' && (
+          <div className="w-96 flex-shrink-0">
+            <CustomerInfoPanel />
+          </div>
+        )}
       </div>
 
-      {/* Bottom Bar */}
+      {/* ── Bottom bar ── */}
       <BottomBar />
     </div>
   )
-}
-
-function formatTime(seconds: number): string {
-  const hrs = Math.floor(seconds / 3600)
-  const mins = Math.floor((seconds % 3600) / 60)
-  const secs = seconds % 60
-  
-  return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }

@@ -52,13 +52,14 @@ class TierSerializer(serializers.ModelSerializer):
     """Serializer for Tier"""
     queue_name = serializers.CharField(source='queue.name', read_only=True)
     agent_name = serializers.CharField(source='agent.name', read_only=True)
+    agent_extension = serializers.CharField(source='agent.sip_extension', read_only=True)
     level_display = serializers.CharField(source='get_level_display', read_only=True)
     position_display = serializers.CharField(source='get_position_display', read_only=True)
-    
+
     class Meta:
         model = Tier
         fields = [
-            'id', 'queue', 'queue_name', 'agent', 'agent_name',
+            'id', 'queue', 'queue_name', 'agent', 'agent_name', 'agent_extension',
             'level', 'level_display', 'position', 'position_display',
             'created_date'
         ]

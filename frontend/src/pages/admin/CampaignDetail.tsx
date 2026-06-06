@@ -224,6 +224,8 @@ export function CampaignDetail() {
           icon={<Phone className="w-4 h-4 text-green-400" />}
           title="Dialing Configuration"
         >
+          <InfoRow label="Dial Mode"      value={campaign.dial_mode_display || '—'} />
+          <InfoRow label="Agent Queue"    value={campaign.queue_name || '—'} />
           <InfoRow label="Caller ID"      value={campaign.callerid     || '—'} />
           <InfoRow label="Caller Name"    value={campaign.caller_name  || '—'} />
           <InfoRow label="Frequency"      value={`${campaign.frequency} calls/min`} />

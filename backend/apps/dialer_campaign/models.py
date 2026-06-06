@@ -10,7 +10,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 import uuid
 from apps.common.models import TimeStampedModel
-from .constants import CampaignStatus, SubscriberStatus, AmdBehavior
+from .constants import CampaignStatus, SubscriberStatus, AmdBehavior, DialMode
 
 
 def generate_campaign_code():
@@ -18,14 +18,27 @@ def generate_campaign_code():
     return uuid.uuid4().hex[:5].upper()
 
 
+def _campaign_localtime():
+    """Current time in the configured campaign calling-hours timezone."""
+    from django.conf import settings
+    now = timezone.now()
+    tz_name = getattr(settings, 'CAMPAIGN_TIMEZONE', None) or settings.TIME_ZONE
+    try:
+        import zoneinfo
+        return now.astimezone(zoneinfo.ZoneInfo(tz_name))
+    except Exception:
+        return now
+
+
 class CampaignManager(models.Manager):
     """Campaign manager with custom querysets"""
-    
+
     def get_running_campaigns(self):
-        """Return all currently running campaigns"""
+        """Return all currently running campaigns (coarse filter — daily
+        window is enforced per-campaign by Campaign.is_running())."""
         now = timezone.now()
-        today = now.strftime('%A').lower()
-        
+        today = _campaign_localtime().strftime('%A').lower()
+
         return self.filter(
             status=CampaignStatus.START,
             startingdate__lte=now,
@@ -63,7 +76,26 @@ class Campaign(TimeStampedModel):
         default=CampaignStatus.PENDING,
         verbose_name=_('status')
     )
-    
+
+    # Dial mode — determines how calls are initiated and routed to agents
+    dial_mode = models.IntegerField(
+        choices=DialMode.choices,
+        default=DialMode.PREDICTIVE,
+        verbose_name=_('dial mode'),
+        help_text=_('Predictive: auto-dial & route; Preview: agent reviews first; Progressive: 1:1 ratio; Manual: agent dials')
+    )
+
+    # Queue — agents receive calls through this queue (required for Predictive / Progressive)
+    queue = models.ForeignKey(
+        'callcenter.Queue',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='campaigns',
+        verbose_name=_('queue'),
+        help_text=_('Queue that receives answered calls from this campaign')
+    )
+
     # Caller ID
     callerid = models.CharField(
         max_length=80,
@@ -109,7 +141,16 @@ class Campaign(TimeStampedModel):
     frequency = models.PositiveIntegerField(
         default=10,
         verbose_name=_('frequency'),
-        help_text=_('Calls per minute')
+        help_text=_('Maximum calls per minute (upper cap)')
+    )
+
+    # Call pacing — how many lines to dial per available agent at once.
+    # 1 = progressive (1 call per free agent). >1 = predictive over-dial to
+    # compensate for unanswered calls. Used for Predictive/Progressive modes.
+    lines_per_agent = models.PositiveIntegerField(
+        default=1,
+        verbose_name=_('lines per agent'),
+        help_text=_('Simultaneous calls to dial per available agent (1 = progressive, 2-3 = predictive)')
     )
     
     calltimeout = models.PositiveIntegerField(
@@ -284,14 +325,20 @@ class Campaign(TimeStampedModel):
         return f"{self.name} [{self.get_status_display()}]"
     
     def is_running(self) -> bool:
-        """Check if campaign should be running now"""
+        """Check if campaign should be running now.
+
+        Date range is compared in UTC (tz-aware), but the daily calling window
+        and day-of-week are compared in the configured CAMPAIGN_TIMEZONE so
+        '09:00–21:08' means the operator's local wall-clock, not UTC.
+        """
         now = timezone.now()
-        today = now.strftime('%A').lower()
-        
+        local = _campaign_localtime()
+        today = local.strftime('%A').lower()
+
         return (
             self.status == CampaignStatus.START and
             self.startingdate <= now <= self.expirationdate and
-            self.daily_start_time <= now.time() <= self.daily_stop_time and
+            self.daily_start_time <= local.time() <= self.daily_stop_time and
             getattr(self, today) is True
         )
 

@@ -1,7 +1,34 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Save, ArrowLeft, AlertCircle } from 'lucide-react'
+import { Save, ArrowLeft, AlertCircle, Zap, Eye, TrendingUp, Phone } from 'lucide-react'
 import api from '@/api/client'
+
+const DIAL_MODES = [
+  {
+    value: 1, label: 'Predictive',
+    icon: Zap,
+    color: 'text-blue-400 border-blue-500/40 bg-blue-500/10',
+    desc: 'System auto-dials contacts and bridges answered calls to the first available agent in the queue.',
+  },
+  {
+    value: 2, label: 'Preview',
+    icon: Eye,
+    color: 'text-purple-400 border-purple-500/40 bg-purple-500/10',
+    desc: 'Agent sees contact info first, then clicks to dial. Good for complex sales or high-value leads.',
+  },
+  {
+    value: 3, label: 'Progressive',
+    icon: TrendingUp,
+    color: 'text-green-400 border-green-500/40 bg-green-500/10',
+    desc: 'One outbound call per available agent — no abandoned calls. Slower than predictive but safer.',
+  },
+  {
+    value: 4, label: 'Manual',
+    icon: Phone,
+    color: 'text-gray-400 border-gray-600 bg-gray-800/40',
+    desc: 'Agents dial numbers themselves from the softphone. Campaign tracks outcomes only.',
+  },
+]
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
 
@@ -10,6 +37,8 @@ const DEFAULT_FORM = {
   description: '',
   callerid: '',
   caller_name: '',
+  dial_mode: 1,
+  queue: '',
   startingdate: '',
   expirationdate: '',
   daily_start_time: '09:00',
@@ -22,6 +51,7 @@ const DEFAULT_FORM = {
   saturday: false,
   sunday: false,
   frequency: 10,
+  lines_per_agent: 1,
   calltimeout: 30,
   callmaxduration: 1800,
   maxretry: 3,
@@ -48,6 +78,7 @@ export function CampaignCreate() {
   const [phonebooks, setPhonebooks] = useState<any[]>([])
   const [gateways, setGateways] = useState<any[]>([])
   const [dncLists, setDncLists] = useState<any[]>([])
+  const [queues, setQueues] = useState<any[]>([])
   const [phonebookError, setPhonebookError] = useState(false)
   const [formData, setFormData] = useState({ ...DEFAULT_FORM })
 
@@ -58,10 +89,11 @@ export function CampaignCreate() {
 
   const fetchOptions = async () => {
     // Use allSettled so a failed gateway/DNC endpoint never prevents phonebooks loading
-    const [pbResult, gwResult, dncResult] = await Promise.allSettled([
+    const [pbResult, gwResult, dncResult, qResult] = await Promise.allSettled([
       api.get('/dialer-contact/phonebooks/'),
       api.get('/dialer-gateway/gateways/'),
       api.get('/dnc/dnc/'),
+      api.get('/callcenter/queues/'),
     ])
 
     if (pbResult.status === 'fulfilled') {
@@ -76,6 +108,12 @@ export function CampaignCreate() {
       setGateways(gwResult.value.data.results ?? gwResult.value.data)
     } else {
       console.error('Failed to fetch gateways:', gwResult.reason)
+    }
+
+    if (qResult.status === 'fulfilled') {
+      setQueues(qResult.value.data.results ?? qResult.value.data)
+    } else {
+      console.error('Failed to fetch queues:', qResult.reason)
     }
 
     if (dncResult.status === 'fulfilled') {
@@ -94,6 +132,8 @@ export function CampaignCreate() {
         description:        data.description    ?? '',
         callerid:           data.callerid        ?? '',
         caller_name:        data.caller_name     ?? '',
+        dial_mode:          data.dial_mode       ?? 1,
+        queue:              data.queue != null ? String(data.queue) : '',
         startingdate:       toDatetimeLocal(data.startingdate),
         expirationdate:     toDatetimeLocal(data.expirationdate),
         daily_start_time:   data.daily_start_time?.slice(0, 5) ?? '09:00',
@@ -106,6 +146,7 @@ export function CampaignCreate() {
         saturday:  data.saturday  ?? false,
         sunday:    data.sunday    ?? false,
         frequency:        data.frequency        ?? 10,
+        lines_per_agent:  data.lines_per_agent   ?? 1,
         calltimeout:      data.calltimeout       ?? 30,
         callmaxduration:  data.callmaxduration   ?? 1800,
         maxretry:         data.maxretry          ?? 3,
@@ -132,6 +173,8 @@ export function CampaignCreate() {
 
     const payload = {
       ...formData,
+      dial_mode:    Number(formData.dial_mode),
+      queue:        formData.queue        ? Number(formData.queue)        : null,
       phonebook:    formData.phonebook.map(Number),
       aleg_gateway: formData.aleg_gateway ? Number(formData.aleg_gateway) : null,
       dnc:          formData.dnc          ? Number(formData.dnc)          : null,
@@ -247,6 +290,76 @@ export function CampaignCreate() {
                 />
               </div>
             </div>
+          </Section>
+
+          {/* Dial Mode + Queue */}
+          <Section title="Dialing Mode & Agent Routing">
+            <p className="text-xs text-gray-500 mb-4">
+              Choose how calls are initiated and how answered calls reach your agents.
+            </p>
+
+            {/* Mode cards */}
+            <div className="grid grid-cols-2 gap-3 mb-5">
+              {DIAL_MODES.map((mode) => {
+                const Icon = mode.icon
+                const active = formData.dial_mode === mode.value
+                return (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    onClick={() => set({ dial_mode: mode.value, queue: active ? formData.queue : formData.queue })}
+                    className={`flex items-start gap-3 p-4 border-2 rounded-xl text-left transition-all ${
+                      active
+                        ? `${mode.color} border-opacity-100`
+                        : 'border-gray-700 bg-[#1F2937] hover:border-gray-600'
+                    }`}
+                  >
+                    <div className={`mt-0.5 flex-shrink-0 p-1.5 rounded-lg ${active ? mode.color : 'text-gray-500 bg-gray-700/60'}`}>
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className={`text-sm font-semibold mb-0.5 ${active ? 'text-white' : 'text-gray-400'}`}>
+                        {mode.label}
+                      </div>
+                      <div className="text-xs text-gray-500 leading-relaxed">{mode.desc}</div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Queue selector — required for Predictive and Progressive */}
+            {(formData.dial_mode === 1 || formData.dial_mode === 3) && (
+              <div>
+                <label className={labelCls}>
+                  Agent Queue{' '}
+                  <span className="text-red-400">*</span>
+                  <span className="ml-2 text-xs text-gray-500 font-normal">
+                    Answered calls are routed to agents in this queue
+                  </span>
+                </label>
+                {queues.length === 0 ? (
+                  <div className="flex items-center gap-3 px-4 py-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl text-sm text-yellow-300">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    No queues found. Go to <strong className="mx-1">Call Center → Queues</strong> and create one first.
+                  </div>
+                ) : (
+                  <select
+                    value={formData.queue}
+                    onChange={(e) => set({ queue: e.target.value })}
+                    className={inputCls}
+                    required={formData.dial_mode === 1 || formData.dial_mode === 3}
+                  >
+                    <option value="">Select a queue…</option>
+                    {queues.map((q: any) => (
+                      <option key={q.id} value={String(q.id)}>
+                        {q.name}{q.agent_count != null ? ` (${q.agent_count} agent${q.agent_count !== 1 ? 's' : ''})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
           </Section>
 
           {/* Schedule */}
@@ -369,6 +482,22 @@ export function CampaignCreate() {
                   min="1" max="200"
                 />
               </div>
+
+              {(formData.dial_mode === 1 || formData.dial_mode === 3) && (
+                <div>
+                  <label className={labelCls}>Lines per Agent</label>
+                  <input
+                    type="number"
+                    value={formData.lines_per_agent}
+                    onChange={(e) => set({ lines_per_agent: Number(e.target.value) })}
+                    className={inputCls}
+                    min="1" max="10"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Simultaneous calls dialed per available agent (1 = progressive, 2–3 = predictive over-dial)
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className={labelCls}>Call Timeout (seconds)</label>

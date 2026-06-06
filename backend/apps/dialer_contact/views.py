@@ -70,32 +70,41 @@ class ContactViewSet(viewsets.ModelViewSet):
         """
         serializer = ContactImportSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        csv_file = serializer.validated_data['csv_file']
-        phonebook = serializer.validated_data['phonebook']
+
+        csv_file        = serializer.validated_data['csv_file']
+        phonebook       = serializer.validated_data['phonebook']
         skip_duplicates = serializer.validated_data['skip_duplicates']
-        
-        # Parse CSV
-        decoded_file = csv_file.read().decode('utf-8')
+        # ISO country code used as fallback region (e.g. 'PK', 'IN', 'US')
+        country_code    = serializer.validated_data.get('country_code') or None
+
+        # Parse CSV — try UTF-8, fall back to latin-1 for older Excel exports
+        raw = csv_file.read()
+        try:
+            decoded_file = raw.decode('utf-8-sig')   # strips BOM if present
+        except UnicodeDecodeError:
+            decoded_file = raw.decode('latin-1')
         csv_reader = csv.DictReader(io.StringIO(decoded_file))
-        
+
         created_count = 0
         skipped_count = 0
-        error_count = 0
-        errors = []
-        
+        error_count   = 0
+        errors        = []
+
         for row_num, row in enumerate(csv_reader, start=2):
             try:
                 contact_number = row.get('contact', '').strip()
-                
+
                 if not contact_number:
                     continue
-                
-                # Parse and normalize phone number
+
+                # Parse and normalise phone number.
+                # If country_code is supplied it is used as the region hint so
+                # numbers without a leading + are interpreted correctly
+                # (e.g. '03001234567' + region='PK' → '+923001234567').
                 try:
-                    parsed = phonenumbers.parse(contact_number, None)
+                    parsed = phonenumbers.parse(contact_number, country_code)
                     if not phonenumbers.is_valid_number(parsed):
-                        errors.append(f"Row {row_num}: Invalid phone number {contact_number}")
+                        errors.append(f"Row {row_num}: Invalid phone number '{contact_number}'")
                         error_count += 1
                         continue
                     contact_number = phonenumbers.format_number(
@@ -103,7 +112,8 @@ class ContactViewSet(viewsets.ModelViewSet):
                         phonenumbers.PhoneNumberFormat.E164
                     )
                 except phonenumbers.NumberParseException:
-                    errors.append(f"Row {row_num}: Could not parse phone number {contact_number}")
+                    errors.append(f"Row {row_num}: Could not parse '{contact_number}'"
+                                  + (f" (try selecting a country code)" if not country_code else ""))
                     error_count += 1
                     continue
                 

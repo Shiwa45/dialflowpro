@@ -47,9 +47,10 @@ class CampaignViewSet(viewsets.ModelViewSet):
         campaign.has_been_started = True
         campaign.save(update_fields=['status', 'has_been_started'])
         
-        # Trigger subscriber collection
-        collect_subscriber.delay(campaign.id)
-        
+        # Pass tenant schema so task runs in the correct DB schema
+        tenant_schema = getattr(request.user.tenant, 'schema_name', '')
+        collect_subscriber.delay(campaign.id, tenant_schema)
+
         return Response({'status': 'started', 'campaign': CampaignSerializer(campaign).data})
     
     @action(detail=True, methods=['post'])

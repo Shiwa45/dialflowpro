@@ -18,11 +18,13 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
 # Task queues configuration
+# Patterns match against the task NAME (the name= kwarg in @shared_task),
+# not the Python module path — so use the actual registered task names.
 app.conf.task_routes = {
-    'apps.dialer_campaign.tasks.*': {'queue': 'campaigns'},
-    'apps.dialer_cdr.tasks.*': {'queue': 'calls'},
-    'apps.mod_sms.tasks.*': {'queue': 'sms'},
-    'apps.appointment.tasks.*': {'queue': 'appointments'},
+    'dialer_campaign.*':  {'queue': 'campaigns'},
+    'dialer_cdr.*':       {'queue': 'calls'},
+    'sms_campaign_*':     {'queue': 'sms'},
+    'sms_send_*':         {'queue': 'sms'},
 }
 
 # Beat schedule configuration

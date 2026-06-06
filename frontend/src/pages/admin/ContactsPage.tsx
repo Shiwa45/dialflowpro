@@ -152,6 +152,32 @@ function ContactModal({
 /* ═══════════════════════════════════════════════════ */
 /*  CSV Import modal                                  */
 /* ═══════════════════════════════════════════════════ */
+// Common countries with ISO code + dial code for the picker
+const COUNTRIES = [
+  { code: 'PK', name: 'Pakistan',            dial: '+92'  },
+  { code: 'IN', name: 'India',               dial: '+91'  },
+  { code: 'US', name: 'United States',       dial: '+1'   },
+  { code: 'GB', name: 'United Kingdom',      dial: '+44'  },
+  { code: 'AE', name: 'UAE',                 dial: '+971' },
+  { code: 'SA', name: 'Saudi Arabia',        dial: '+966' },
+  { code: 'BD', name: 'Bangladesh',          dial: '+880' },
+  { code: 'LK', name: 'Sri Lanka',           dial: '+94'  },
+  { code: 'NP', name: 'Nepal',               dial: '+977' },
+  { code: 'AF', name: 'Afghanistan',         dial: '+93'  },
+  { code: 'CA', name: 'Canada',              dial: '+1'   },
+  { code: 'AU', name: 'Australia',           dial: '+61'  },
+  { code: 'NG', name: 'Nigeria',             dial: '+234' },
+  { code: 'KE', name: 'Kenya',               dial: '+254' },
+  { code: 'ZA', name: 'South Africa',        dial: '+27'  },
+  { code: 'EG', name: 'Egypt',               dial: '+20'  },
+  { code: 'TR', name: 'Turkey',              dial: '+90'  },
+  { code: 'PH', name: 'Philippines',         dial: '+63'  },
+  { code: 'ID', name: 'Indonesia',           dial: '+62'  },
+  { code: 'MY', name: 'Malaysia',            dial: '+60'  },
+  { code: 'DE', name: 'Germany',             dial: '+49'  },
+  { code: 'FR', name: 'France',              dial: '+33'  },
+]
+
 function ImportModal({
   phonebook,
   onDone,
@@ -161,11 +187,19 @@ function ImportModal({
   onDone: () => void
   onClose: () => void
 }) {
-  const [file,   setFile]   = useState<File | null>(null)
-  const [skip,   setSkip]   = useState(true)
-  const [busy,   setBusy]   = useState(false)
-  const [result, setResult] = useState<any>(null)
-  const [err,    setErr]    = useState('')
+  const [file,        setFile]        = useState<File | null>(null)
+  const [skip,        setSkip]        = useState(true)
+  const [countryCode, setCountryCode] = useState('')
+  const [search,      setSearch]      = useState('')
+  const [busy,        setBusy]        = useState(false)
+  const [result,      setResult]      = useState<any>(null)
+  const [err,         setErr]         = useState('')
+
+  const filtered = COUNTRIES.filter(c =>
+    c.name.toLowerCase().includes(search.toLowerCase()) ||
+    c.dial.includes(search) ||
+    c.code.toLowerCase().includes(search.toLowerCase())
+  )
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -175,6 +209,7 @@ function ImportModal({
     fd.append('phonebook', String(phonebook.id))
     fd.append('csv_file', file)
     fd.append('skip_duplicates', String(skip))
+    if (countryCode) fd.append('country_code', countryCode)
     try {
       const { data } = await api.post('/dialer-contact/contacts/import_csv/', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -218,9 +253,119 @@ function ImportModal({
       ) : (
         <form onSubmit={submit} className="space-y-4">
           {err && <p className="text-sm text-red-400">{err}</p>}
-          <div className="bg-gray-800/50 rounded-xl p-3 text-xs text-gray-400">
-            CSV columns: <span className="text-gray-200 font-mono">contact, first_name, last_name, email, status</span>
+
+          {/* Format guide */}
+          <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-gray-300">Required CSV format</p>
+              <button
+                type="button"
+                onClick={() => {
+                  const csv = [
+                    'contact,first_name,last_name,email,status',
+                    '+14155551234,John,Doe,john@example.com,1',
+                    '+14155555678,Jane,Smith,jane@example.com,1',
+                    '+923001234567,Ahmed,Khan,,1',
+                    '+447911123456,Alice,Brown,alice@example.com,1',
+                  ].join('\n')
+                  const blob = new Blob([csv], { type: 'text/csv' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url; a.download = 'contacts_template.csv'; a.click()
+                  URL.revokeObjectURL(url)
+                }}
+                className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                ↓ Download template
+              </button>
+            </div>
+
+            {/* Column table */}
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-700">
+                  <th className="text-left py-1 text-gray-500 font-medium">Column</th>
+                  <th className="text-left py-1 text-gray-500 font-medium">Required</th>
+                  <th className="text-left py-1 text-gray-500 font-medium">Format / Example</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800">
+                {[
+                  { col: 'contact', req: true,  ex: '+14155551234  or  +923001234567' },
+                  { col: 'first_name', req: false, ex: 'John' },
+                  { col: 'last_name',  req: false, ex: 'Doe' },
+                  { col: 'email',      req: false, ex: 'john@example.com' },
+                  { col: 'status',     req: false, ex: '1 = Active, 2 = Inactive (default 1)' },
+                ].map(r => (
+                  <tr key={r.col}>
+                    <td className="py-1 font-mono text-gray-200">{r.col}</td>
+                    <td className="py-1">{r.req ? <span className="text-red-400">Yes</span> : <span className="text-gray-500">No</span>}</td>
+                    <td className="py-1 text-gray-400">{r.ex}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p className="text-[11px] text-yellow-400/80">
+              ⚠ Phone numbers must include the country code with + prefix — OR select your country below and local numbers are converted automatically.
+            </p>
           </div>
+
+          {/* Country code picker */}
+          <div>
+            <label className={lbl}>
+              Default Country Code
+              <span className="ml-2 text-xs text-gray-500 font-normal">
+                — auto-adds country prefix to numbers without <code className="text-gray-400">+</code>
+              </span>
+            </label>
+            <div className="relative mb-2">
+              <input
+                type="text"
+                placeholder="Search country…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full px-3 py-2 bg-[#1F2937] border border-gray-700 rounded-xl text-white text-sm placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto pr-1">
+              {/* None option */}
+              <button
+                type="button"
+                onClick={() => { setCountryCode(''); setSearch('') }}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors text-left ${
+                  countryCode === ''
+                    ? 'bg-blue-500/20 border-blue-500/40 text-white'
+                    : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                }`}
+              >
+                <span className="font-mono text-xs w-8">—</span>
+                <span className="text-xs">Numbers have + already</span>
+              </button>
+
+              {filtered.map(c => (
+                <button
+                  key={c.code}
+                  type="button"
+                  onClick={() => { setCountryCode(c.code); setSearch('') }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors text-left ${
+                    countryCode === c.code
+                      ? 'bg-blue-500/20 border-blue-500/40 text-white'
+                      : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                  }`}
+                >
+                  <span className="font-mono text-xs text-blue-400 w-8">{c.dial}</span>
+                  <span className="text-xs truncate">{c.name}</span>
+                </button>
+              ))}
+            </div>
+            {countryCode && (
+              <p className="text-xs text-blue-400 mt-2">
+                ✓ Numbers without + will be treated as <strong>{COUNTRIES.find(c => c.code === countryCode)?.name}</strong> ({COUNTRIES.find(c => c.code === countryCode)?.dial}) numbers
+              </p>
+            )}
+          </div>
+
           <div>
             <label className={lbl}>CSV File <span className="text-red-400">*</span></label>
             <input
@@ -230,7 +375,9 @@ function ImportModal({
               className="w-full px-4 py-2 bg-[#1F2937] border border-gray-700 rounded-xl text-white text-sm file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-blue-500 file:text-white"
               required
             />
+            {file && <p className="text-xs text-gray-500 mt-1">{file.name} — {(file.size / 1024).toFixed(1)} KB</p>}
           </div>
+
           <label className="flex items-center gap-3 cursor-pointer">
             <div onClick={() => setSkip(s => !s)} className={`relative w-10 h-5 rounded-full transition-colors ${skip ? 'bg-blue-500' : 'bg-gray-700'}`}>
               <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${skip ? 'translate-x-5' : 'translate-x-0.5'}`} />

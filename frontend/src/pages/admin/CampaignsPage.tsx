@@ -279,7 +279,24 @@ function CampaignRow({
             >
               {campaign.name}
             </button>
-            <div className="text-xs text-gray-600 font-mono mt-0.5">{campaign.campaign_code}</div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xs text-gray-600 font-mono">{campaign.campaign_code}</span>
+              {campaign.dial_mode_display && (
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                  campaign.dial_mode === 1 ? 'text-blue-400 bg-blue-500/10 border-blue-500/20' :
+                  campaign.dial_mode === 2 ? 'text-purple-400 bg-purple-500/10 border-purple-500/20' :
+                  campaign.dial_mode === 3 ? 'text-green-400 bg-green-500/10 border-green-500/20' :
+                  'text-gray-400 bg-gray-700/50 border-gray-700'
+                }`}>
+                  {campaign.dial_mode_display}
+                </span>
+              )}
+              {campaign.queue_name && (
+                <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700">
+                  {campaign.queue_name}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </td>

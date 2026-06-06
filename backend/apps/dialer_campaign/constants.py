@@ -27,6 +27,14 @@ class SubscriberStatus(models.IntegerChoices):
     COMPLETED = 8, _('Completed')
 
 
+class DialMode(models.IntegerChoices):
+    """How the campaign initiates calls and routes them to agents"""
+    PREDICTIVE  = 1, _('Predictive')
+    PREVIEW     = 2, _('Preview')
+    PROGRESSIVE = 3, _('Progressive')
+    MANUAL      = 4, _('Manual')
+
+
 class AmdBehavior(models.IntegerChoices):
     """AMD (Answering Machine Detection) behavior"""
     DISABLE = 0, _('Disable')

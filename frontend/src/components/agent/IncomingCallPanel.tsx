@@ -1,109 +1,120 @@
-import { Phone, PhoneOff, Tag } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useAgentDesktopStore } from '@/store/agentDesktopStore'
+import { useAgentCommands } from '@/hooks/useAgentCommands'
+import { formatPhone } from '@/lib/utils'
+import { Phone, PhoneOff, User } from 'lucide-react'
 
 export function IncomingCallPanel() {
-  const [incomingCall, setIncomingCall] = useState({
-    caller_number: '+91 98765 43210',
-    location: 'India',
-    campaign_type: 'Sales Inquiry',
-  })
-  const [autoAnswer, setAutoAnswer] = useState(false)
+  const { activeCall } = useAgentDesktopStore()
+  const { answerCall, hangupCall } = useAgentCommands()
+  const [ringPulse, setRingPulse] = useState(0)
 
-  const handleAnswer = () => {
-    console.log('Answering call...')
-  }
+  // Pulsing ring animation counter
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRingPulse((p) => p + 1)
+    }, 1500)
+    return () => clearInterval(interval)
+  }, [])
 
-  const handleDecline = () => {
-    console.log('Declining call...')
-    setIncomingCall(null as any)
-  }
+  if (!activeCall) return null
 
-  if (!incomingCall) {
-    return (
-      <div className="bg-[#111827] flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-gray-800 flex items-center justify-center">
-            <Phone className="w-12 h-12 text-gray-600" />
-          </div>
-          <p className="text-gray-500">Waiting for calls...</p>
-        </div>
-      </div>
-    )
-  }
+  const displayNumber = formatPhone(activeCall.caller_number)
+  const displayName = activeCall.caller_name || activeCall.lead?.first_name
+    ? `${activeCall.lead?.first_name || ''} ${activeCall.lead?.last_name || ''}`.trim() || activeCall.caller_name
+    : 'Unknown Caller'
 
   return (
-    <div className="bg-[#111827] flex flex-col items-center justify-center gap-8 p-8">
-      {/* Call Status */}
-      <div className="text-center w-full max-w-md">
-        <p className="text-blue-400 text-sm font-medium tracking-wider mb-6">
-          INCOMING CALL
-        </p>
-
-        {/* Avatar */}
-        <div className="w-32 h-32 mx-auto mb-6 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
-          <div className="w-28 h-28 rounded-full bg-[#1F2937] flex items-center justify-center">
-            <svg className="w-16 h-16 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
-            </svg>
-          </div>
-        </div>
-
-        {/* Phone Number */}
-        <h2 className="text-4xl font-light text-white mb-2">
-          {incomingCall.caller_number}
-        </h2>
-
-        {/* Location */}
-        <p className="text-gray-400 mb-4">{incomingCall.location}</p>
-
-        {/* Campaign Type Badge */}
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-full">
-          <Tag className="w-3.5 h-3.5 text-blue-400" />
-          <span className="text-sm text-blue-400">{incomingCall.campaign_type}</span>
-        </div>
-      </div>
-
-      {/* Answer/Decline Buttons */}
-      <div className="flex items-center gap-8">
-        {/* Answer Button */}
-        <button
-          onClick={handleAnswer}
-          className="group relative w-20 h-20 rounded-full bg-green-500 hover:bg-green-600 transition-all duration-200 shadow-lg shadow-green-500/50 hover:shadow-green-500/70 hover:scale-110"
-        >
-          <Phone className="absolute inset-0 m-auto w-8 h-8 text-white" />
-          <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-xs text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">
-            Answer
-          </div>
-        </button>
-
-        {/* Decline Button */}
-        <button
-          onClick={handleDecline}
-          className="group relative w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 transition-all duration-200 shadow-lg shadow-red-500/50 hover:shadow-red-500/70 hover:scale-110"
-        >
-          <PhoneOff className="absolute inset-0 m-auto w-8 h-8 text-white" />
-          <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-xs text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">
-            Decline
-          </div>
-        </button>
-      </div>
-
-      {/* Auto Answer Toggle */}
-      <div className="flex items-center gap-3 mt-4">
-        <span className="text-sm text-gray-400">Auto Answer</span>
-        <button
-          onClick={() => setAutoAnswer(!autoAnswer)}
-          className={`relative w-11 h-6 rounded-full transition-colors ${
-            autoAnswer ? 'bg-blue-500' : 'bg-gray-700'
-          }`}
+    <div className="flex-1 flex items-center justify-center bg-[#0A0E1A] relative overflow-hidden">
+      {/* Background pulse rings */}
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="absolute inset-0 flex items-center justify-center pointer-events-none"
         >
           <div
-            className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${
-              autoAnswer ? 'translate-x-5' : 'translate-x-0'
-            }`}
+            className="rounded-full border border-blue-500/10"
+            style={{
+              width: `${200 + i * 120}px`,
+              height: `${200 + i * 120}px`,
+              animation: `ping 3s cubic-bezier(0, 0, 0.2, 1) infinite`,
+              animationDelay: `${i * 0.5}s`,
+              opacity: 0.3 - i * 0.08,
+            }}
           />
-        </button>
+        </div>
+      ))}
+
+      <div className="relative z-10 flex flex-col items-center gap-8 max-w-md">
+        {/* Caller avatar */}
+        <div className="relative">
+          <div className="w-28 h-28 rounded-full bg-gradient-to-br from-blue-500/20 to-blue-600/10 border-2 border-blue-500/30 flex items-center justify-center animate-pulse">
+            <User className="w-14 h-14 text-blue-400" />
+          </div>
+          {/* Ringing indicator */}
+          <div className="absolute -top-1 -right-1 w-5 h-5 bg-green-500 rounded-full animate-bounce flex items-center justify-center">
+            <Phone className="w-2.5 h-2.5 text-white" />
+          </div>
+        </div>
+
+        {/* Caller info */}
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-white mb-1">{displayName}</h2>
+          <p className="text-lg text-blue-400 font-mono">{displayNumber}</p>
+
+          {activeCall.queue_name && (
+            <p className="text-sm text-gray-500 mt-2">
+              via <span className="text-gray-300">{activeCall.queue_name}</span>
+            </p>
+          )}
+          {activeCall.campaign_name && (
+            <p className="text-xs text-gray-600 mt-1">
+              Campaign: {activeCall.campaign_name}
+            </p>
+          )}
+        </div>
+
+        {/* Ringing text */}
+        <p className="text-sm text-gray-400 animate-pulse">
+          Incoming call{'.'.repeat((ringPulse % 3) + 1)}
+        </p>
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-8">
+          {/* Decline */}
+          <button
+            onClick={() => hangupCall(activeCall.call_id)}
+            className="group flex flex-col items-center gap-2"
+          >
+            <div className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-500 active:bg-red-700 flex items-center justify-center transition-all group-active:scale-90 shadow-lg shadow-red-500/20">
+              <PhoneOff className="w-7 h-7 text-white" />
+            </div>
+            <span className="text-xs text-gray-400 group-hover:text-red-400 transition-colors">
+              Decline
+            </span>
+          </button>
+
+          {/* Answer */}
+          <button
+            onClick={() => answerCall(activeCall.call_id)}
+            className="group flex flex-col items-center gap-2"
+          >
+            <div className="w-20 h-20 rounded-full bg-green-600 hover:bg-green-500 active:bg-green-700 flex items-center justify-center transition-all group-active:scale-90 shadow-lg shadow-green-500/30 animate-[wiggle_1s_ease-in-out_infinite]">
+              <Phone className="w-9 h-9 text-white" />
+            </div>
+            <span className="text-xs text-gray-400 group-hover:text-green-400 transition-colors">
+              Answer
+            </span>
+          </button>
+        </div>
       </div>
+
+      <style>{`
+        @keyframes wiggle {
+          0%, 100% { transform: rotate(-3deg); }
+          50% { transform: rotate(3deg); }
+        }
+      `}</style>
     </div>
   )
 }

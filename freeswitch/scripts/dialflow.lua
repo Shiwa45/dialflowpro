@@ -15,7 +15,9 @@ Called from FreeSWITCH with channel variables:
 ]]
 
 -- Configuration
-local API_URL = os.getenv("DIALFLOW_API_URL") or "http://api:8000"
+-- Windows host IP as seen from WSL2 (set DIALFLOW_API_URL env var to override)
+local API_URL = os.getenv("DIALFLOW_API_URL") or "http://172.31.48.1:8000"
+local FS_INTERNAL_PROFILE = os.getenv("FS_INTERNAL_PROFILE") or "internal"
 local MAX_RETRIES = 3
 local DTMF_TIMEOUT = 5000  -- 5 seconds in milliseconds
 
@@ -46,17 +48,27 @@ function http_get(url)
 end
 
 -- Utility: HTTP POST request
-function http_post(url, data)
+-- extra_headers: optional list of header strings (e.g. {"X-Tenant: test_tenant"})
+function http_post(url, data, extra_headers)
     local curl = require("cURL")
     local json = require("JSON")
     local response_body = ""
-    
+
     local post_data = json:encode(data)
-    
+
+    -- django-tenants routes by Host header; the FreeSWITCH host (an IP) maps
+    -- to no tenant, so we MUST send X-Tenant to reach the right schema.
+    local headers = {"Content-Type: application/json"}
+    if extra_headers then
+        for _, h in ipairs(extra_headers) do
+            table.insert(headers, h)
+        end
+    end
+
     local c = curl.easy{
         url = url,
         post = true,
-        httpheader = {"Content-Type: application/json"},
+        httpheader = headers,
         postfields = post_data,
         writefunction = function(str)
             response_body = response_body .. str
@@ -383,17 +395,109 @@ function post_survey_response(survey_id, callrequest_id, responses)
     return response ~= nil
 end
 
+-- Report call completion back to Django (frees subscriber + pacing capacity)
+function post_hangup(session, answered_epoch, disposition)
+    local request_uuid = session:getVariable("request_uuid") or ""
+    if request_uuid == "" then return end
+
+    local billsec = 0
+    if answered_epoch then billsec = os.time() - answered_epoch end
+
+    local hangup_cause = session:hangupCause() or "NORMAL_CLEARING"
+    local tenant_schema = session:getVariable("tenant_schema") or ""
+
+    local payload = {
+        callid        = session:get_uuid(),
+        request_uuid  = request_uuid,
+        tenant_schema = tenant_schema,
+        callerid      = session:getVariable("caller_id_number") or "",
+        duration      = billsec,
+        billsec       = billsec,
+        disposition   = disposition or "ANSWER",
+        hangup_cause  = hangup_cause,
+    }
+    http_post(
+        API_URL .. "/api/dialer-cdr/webhook/hangup/",
+        payload,
+        {"X-Tenant: " .. tenant_schema}
+    )
+end
+
+
+-- Route answered predictive/progressive call to an available agent
+function route_to_agent(session)
+    local call_id      = session:get_uuid()
+    local campaign_id  = session:getVariable("campaign_id") or ""
+    local caller_number = session:getVariable("caller_id_number")
+                       or session:getVariable("destination_number")
+                       or ""
+    local tenant_id    = session:getVariable("tenant_id") or ""
+
+    freeswitch.consoleLog("info",
+        "Predictive routing: call_id=" .. call_id ..
+        " campaign=" .. campaign_id ..
+        " caller=" .. caller_number .. "\n")
+
+    local tenant_schema = session:getVariable("tenant_schema") or ""
+    local payload = {
+        call_id       = call_id,
+        caller_number = caller_number,
+        campaign_id   = campaign_id ~= "" and tonumber(campaign_id) or nil,
+        tenant_id     = tenant_id ~= "" and tonumber(tenant_id) or nil,
+        tenant_schema = tenant_schema,
+    }
+
+    local response = http_post(
+        API_URL .. "/api/callcenter/route-call/",
+        payload,
+        {"X-Tenant: " .. tenant_schema}
+    )
+    if not response then
+        freeswitch.consoleLog("err", "route-call API unreachable\n")
+        return false
+    end
+
+    local json = require("JSON")
+    local data = json:decode(response)
+    if not data or not data.available or not data.agent_extension or data.agent_extension == "" then
+        freeswitch.consoleLog("info", "No agent available — hanging up\n")
+        return false
+    end
+
+    local ext = data.agent_extension
+    freeswitch.consoleLog("info", "Bridging to agent extension: " .. ext .. "\n")
+
+    -- Bridge call to agent's registered SIP phone (XLite / softphone)
+    local answered_epoch = os.time()
+    session:bridge("sofia/" .. FS_INTERNAL_PROFILE .. "/" .. ext)
+
+    -- Bridge ended → report hangup so the call completes & frees capacity
+    post_hangup(session, answered_epoch, "ANSWER")
+    return true
+end
+
+
 -- Main execution
 function main(session)
     -- Answer call
     session:answer()
-    
-    -- Get survey ID from channel variable
+
+    -- ── Predictive / Progressive mode: route to agent, skip IVR ──
+    local dial_mode = tonumber(session:getVariable("dial_mode") or "0")
+    if dial_mode == 1 or dial_mode == 3 then
+        local ok = route_to_agent(session)
+        if not ok then
+            session:hangup("NO_USER_RESPONSE")
+        end
+        return
+    end
+
+    -- ── IVR / Survey mode ─────────────────────────────────────
     local survey_id = session:getVariable("survey_id")
     local request_uuid = session:getVariable("request_uuid")
-    
+
     if not survey_id then
-        freeswitch.consoleLog("err", "No survey_id provided\n")
+        freeswitch.consoleLog("err", "No survey_id and not predictive mode\n")
         session:hangup()
         return
     end

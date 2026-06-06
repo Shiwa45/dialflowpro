@@ -235,7 +235,23 @@ class Agent(TimeStampedModel):
         auto_now=True,
         verbose_name=_('last status change')
     )
-    
+
+    # ── Presence tracking (real availability) ──
+    # An agent is only truly available to receive calls when their Agent
+    # Desktop WebSocket is connected AND their SIP phone is registered.
+    ws_connected = models.BooleanField(
+        default=False,
+        verbose_name=_('websocket connected'),
+        help_text=_('True while the agent desktop WebSocket is connected')
+    )
+
+    last_heartbeat = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('last heartbeat'),
+        help_text=_('Last WebSocket heartbeat — used to detect dropped connections')
+    )
+
     class Meta:
         db_table = 'callcenter_agent'
         verbose_name = _('agent')
