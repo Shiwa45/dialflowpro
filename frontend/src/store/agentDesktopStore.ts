@@ -179,33 +179,30 @@ export const useAgentDesktopStore = create<AgentDesktopState>((set, get) => ({
 
       case 'call_ended': {
         const prevCall = state.activeCall
-        const wrapUp = state.agent?.wrap_up_time ?? 0
 
+        // Always go to mandatory wrap-up. The call does NOT auto-clear — the
+        // agent must submit a disposition (which makes them available again).
         set({
           activeCall: prevCall
-            ? { ...prevCall, state: wrapUp > 0 ? 'wrap_up' : 'idle' }
+            ? { ...prevCall, state: 'wrap_up' }
             : null,
-          wrapUpTime: wrapUp,
+          wrapUpTime: state.agent?.wrap_up_time ?? 0,
           notification: {
             type: 'info',
-            message: `Call ended${event.hangup_cause ? ` (${event.hangup_cause})` : ''}`,
+            message: `Call ended${event.hangup_cause ? ` (${event.hangup_cause})` : ''} — please complete wrap-up`,
           },
         })
 
+        // Agent is in after-call work (Idle), NOT available, until disposed.
         if (state.agent) {
           set({
-            agent: { ...state.agent, state: 'Waiting' as any },
+            agent: { ...state.agent, state: 'Idle' as any },
             todayStats: {
               ...state.todayStats,
               calls: state.todayStats.calls + 1,
               duration: state.todayStats.duration + (event.duration || 0),
             },
           })
-        }
-
-        // Auto-clear activeCall after wrap-up or immediately
-        if (wrapUp <= 0) {
-          setTimeout(() => set({ activeCall: null }), 2000)
         }
         break
       }
@@ -329,12 +326,9 @@ export const useAgentDesktopStore = create<AgentDesktopState>((set, get) => ({
   setWrapUpTime: (t) => set({ wrapUpTime: t }),
   decrementWrapUp: () => {
     const t = get().wrapUpTime
-    if (t > 0) {
-      set({ wrapUpTime: t - 1 })
-    } else {
-      // Wrap-up done — clear call
-      set({ activeCall: null, wrapUpTime: 0 })
-    }
+    if (t > 0) set({ wrapUpTime: t - 1 })
+    // Do NOT auto-clear when the countdown ends — disposition is mandatory.
+    // The call clears only after the agent submits a disposition.
   },
   toggleDialpad: () => set((s) => ({ isDialpadOpen: !s.isDialpadOpen })),
   setDialInput: (v) => set({ dialInput: v }),

@@ -1,0 +1,14 @@
+<include>
+  <!-- Gateway to SELF-HOSTED LiveKit SIP (livekit-sip in this same WSL).
+       Local hop = zero NAT, plain UDP, no TLS/auth needed. The Lua
+       route_to_ai() bridges answered AI-campaign calls here; X-Agent-Id /
+       X-Tenant-Schema headers carry routing info (trunk headers_to_attributes).
+       (The old LiveKit Cloud config died on CGNAT return audio.) -->
+  <gateway name="livekit">
+    <param name="realm"             value="172.31.56.241:5062"/>
+    <param name="proxy"             value="172.31.56.241:5062"/>
+    <param name="register"          value="false"/>
+    <param name="caller-id-in-from" value="true"/>
+    <param name="ping"              value="0"/>
+  </gateway>
+</include>

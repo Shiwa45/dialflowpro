@@ -64,9 +64,36 @@ class AgentStatusConsumer(AsyncJsonWebsocketConsumer):
             'status': event['status'],
             'status_display': event['status_display'],
             'state': event['state'],
+            'state_display': event.get('state_display', event['state']),
+            'extension': event.get('extension', ''),
             'calls_answered': event.get('calls_answered', 0),
             'talk_time': event.get('talk_time', 0),
             'timestamp': event.get('timestamp', timezone.now().isoformat()),
+        })
+
+    async def agent_presence_update(self, event):
+        await self.send_json({
+            'type': 'agent_presence',
+            'agent_id': event['agent_id'],
+            'agent_name': event['agent_name'],
+            'extension': event.get('extension', ''),
+            'registered': event['registered'],
+            'source': event.get('source', ''),
+            'timestamp': event.get('timestamp'),
+        })
+
+    async def call_event(self, event):
+        await self.send_json({
+            'type': 'call_event',
+            'event': event['event'],
+            'agent_id': event.get('agent_id'),
+            'agent_name': event.get('agent_name', ''),
+            'caller': event.get('caller', ''),
+            'callee': event.get('callee', ''),
+            'uuid': event.get('uuid', ''),
+            'queue': event.get('queue', ''),
+            'duration': event.get('duration', 0),
+            'timestamp': event.get('timestamp'),
         })
 
     @tenant_db_sync
@@ -230,6 +257,7 @@ class AgentDesktopConsumer(AsyncJsonWebsocketConsumer):
         result = await self._set_agent_status('available')
         await self.send_json({'type': 'agent_state', **result})
         await self._broadcast_agent_update(result)
+        await self._kick_dialer()   # start dialing immediately, don't wait 60s
 
     async def _handle_logout(self, content):
         result = await self._set_agent_status('logged_out')
@@ -241,6 +269,8 @@ class AgentDesktopConsumer(AsyncJsonWebsocketConsumer):
         result = await self._set_agent_status(new_status)
         await self.send_json({'type': 'agent_state', **result})
         await self._broadcast_agent_update(result)
+        if new_status == 'available':
+            await self._kick_dialer()   # start dialing immediately
 
     async def _handle_answer_call(self, content):
         call_id = content.get('call_id')
@@ -282,11 +312,16 @@ class AgentDesktopConsumer(AsyncJsonWebsocketConsumer):
         disposition = content.get('disposition', '')
         notes = content.get('notes', '')
         await self._save_disposition(call_id, disposition, notes)
+        # Wrap-up complete → agent becomes available again (back on the pacer).
+        result = await self._finish_wrapup()
         await self.send_json({
             'type': 'disposition_saved',
             'call_id': call_id,
             'disposition': disposition,
         })
+        await self.send_json({'type': 'agent_state', **result})
+        await self._broadcast_agent_update(result)
+        await self._kick_dialer()   # available again → dial next call immediately
 
     async def _handle_select_queue(self, content):
         queue_id = content.get('queue_id')
@@ -533,7 +568,7 @@ class AgentDesktopConsumer(AsyncJsonWebsocketConsumer):
         from .models import Agent, QueueMember
         from .constants import AgentState
         agent = Agent.objects.get(id=self.agent_id)
-        agent.state = AgentState.IN_CALL
+        agent.state = AgentState.IN_A_QUEUE_CALL
         agent.last_bridge_start = timezone.now()
         agent.save(update_fields=['state', 'last_bridge_start'])
 
@@ -638,6 +673,57 @@ class AgentDesktopConsumer(AsyncJsonWebsocketConsumer):
             call.save(update_fields=['disposition'])
         except VoIPCall.DoesNotExist:
             logger.warning(f"VoIPCall not found for disposition: {call_id}")
+
+    @tenant_db_sync
+    def _kick_dialer(self):
+        """Agent just became available → immediately enqueue a spool cycle for
+        the running campaigns on this agent's queue(s), so the dialer doesn't
+        wait up to 60s for the next heartbeat to notice them."""
+        from .models import Agent, Tier
+        from apps.dialer_campaign.models import Campaign
+        from apps.dialer_campaign.constants import CampaignStatus
+        from apps.dialer_campaign.tasks import campaign_spool_contact
+
+        schema = getattr(self, 'tenant_name', None) or 'public'
+        queue_ids = list(
+            Tier.objects.filter(agent_id=self.agent_id).values_list('queue_id', flat=True)
+        )
+        if not queue_ids:
+            return
+        campaign_ids = list(
+            Campaign.objects.filter(
+                status=CampaignStatus.START, queue_id__in=queue_ids
+            ).values_list('id', flat=True)
+        )
+        for cid in campaign_ids:
+            try:
+                campaign_spool_contact.delay(cid, schema)
+            except Exception as exc:
+                logger.warning(f"kick_dialer enqueue failed for campaign {cid}: {exc}")
+        if campaign_ids:
+            logger.info(f"Agent {self.agent_id} available → kicked dialer for campaigns {campaign_ids}")
+
+    @tenant_db_sync
+    def _finish_wrapup(self):
+        """Wrap-up done → put the agent back to Waiting (available) so the
+        pacer can route the next call. Only if still logged in/available."""
+        from .models import Agent
+        from .constants import AgentStatus, AgentState
+        agent = Agent.objects.get(id=self.agent_id)
+        if agent.status == AgentStatus.AVAILABLE:
+            agent.state = AgentState.WAITING
+            agent.save(update_fields=['state'])
+        return {
+            'agent': {
+                'id': agent.id,
+                'name': agent.name,
+                'status': agent.status,
+                'status_display': agent.get_status_display(),
+                'state': agent.state,
+                'calls_answered': agent.calls_answered,
+                'talk_time': agent.talk_time,
+            }
+        }
 
     @tenant_db_sync
     def _get_queue_stats(self, queue_id):
@@ -767,16 +853,37 @@ class LiveDashboardConsumer(AsyncJsonWebsocketConsumer):
             'type': 'dashboard_update',
             'total_agents': event['total_agents'],
             'available_agents': event['available_agents'],
+            'on_call_agents': event.get('on_call_agents', 0),
             'total_queues': event['total_queues'],
             'total_waiting_calls': event['total_waiting_calls'],
             'total_active_calls': event['total_active_calls'],
+            'longest_wait_time': event.get('longest_wait_time', 0),
+            'avg_wait_time': event.get('avg_wait_time', 0),
+            'service_level': event.get('service_level', 0),
             'timestamp': event.get('timestamp'),
         })
 
-    # Also forward agent status updates to dashboard
+    # Forward the granular events so the Agent Tracking page needs only ONE
+    # socket. Aggregate refreshes arrive separately as dashboard_update events
+    # (broadcast_dashboard_snapshot).
     async def agent_status_update(self, event):
-        data = await self._get_dashboard_data()
-        await self.send_json({'type': 'dashboard_update', **data})
+        await AgentStatusConsumer.agent_status_update(self, event)
+
+    async def agent_presence_update(self, event):
+        await AgentStatusConsumer.agent_presence_update(self, event)
+
+    async def call_event(self, event):
+        await AgentStatusConsumer.call_event(self, event)
+
+    async def monitor_event(self, event):
+        await self.send_json({
+            'type': 'monitor_event',
+            'agent_id': event['agent_id'],
+            'mode': event['mode'],
+            'active': event['active'],
+            'by_user': event.get('by_user', ''),
+            'timestamp': event.get('timestamp'),
+        })
 
     @tenant_db_sync
     def _get_dashboard_data(self):
@@ -800,3 +907,39 @@ class LiveDashboardConsumer(AsyncJsonWebsocketConsumer):
             'total_active_calls': on_call,
             'timestamp': timezone.now().isoformat(),
         }
+
+
+class AgentMonitorConsumer(AsyncJsonWebsocketConsumer):
+    """
+    Per-agent monitor channel. The agent's softphone subscribes so it can show a
+    "supervisor is listening" indicator; supervisors can also watch one agent.
+
+    Usage:
+        ws://host/ws/callcenter/monitor/{agent_id}/
+    """
+
+    async def connect(self):
+        self.agent_id = self.scope['url_route']['kwargs']['agent_id']
+        self.group_name = f'monitor_{self.agent_id}'
+        await self.accept()
+        try:
+            await self.channel_layer.group_add(self.group_name, self.channel_name)
+        except Exception as exc:
+            logger.error(f"Channel layer unavailable: {exc}")
+            await self.close(code=4500)
+
+    async def disconnect(self, close_code):
+        try:
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        except Exception:
+            pass
+
+    async def monitor_event(self, event):
+        await self.send_json({
+            'type': 'monitor_event',
+            'agent_id': event['agent_id'],
+            'mode': event['mode'],
+            'active': event['active'],
+            'by_user': event.get('by_user', ''),
+            'timestamp': event.get('timestamp'),
+        })

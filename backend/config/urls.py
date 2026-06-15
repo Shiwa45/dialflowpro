@@ -42,6 +42,9 @@ urlpatterns = [
     path('api/dnc/', include('apps.dnc.urls')),
     path('api/sms/', include('apps.mod_sms.urls')),
 
+    # AI Voice Agents
+    path('api/ai/', include('apps.ai_agent.urls')),
+
     # Health check
     path('health/', include('apps.common.urls')),
 ]

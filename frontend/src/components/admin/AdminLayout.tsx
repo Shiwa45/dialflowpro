@@ -11,6 +11,8 @@ import {
   MessageSquare,
   Shield,
   Activity,
+  Radio,
+  Bot,
 } from 'lucide-react'
 
 export function AdminLayout() {
@@ -19,6 +21,9 @@ export function AdminLayout() {
   const navigation = [
     { name: 'Dashboard',      to: '/',               icon: LayoutDashboard, exact: true },
     { name: 'Live Monitoring',to: '/live-monitoring', icon: Activity    },
+    { name: 'Agent Tracking', to: '/agent-tracking',  icon: Radio       },
+    { name: 'AI Agents',      to: '/ai-agents',       icon: Bot         },
+    { name: 'AI Calls',       to: '/ai-calls',        icon: MessageSquare },
     { name: 'Campaigns',      to: '/campaigns',       icon: Phone       },
     { name: 'SMS Campaigns',  to: '/sms-campaigns',   icon: MessageSquare },
     { name: 'Contacts',       to: '/contacts',        icon: Users       },

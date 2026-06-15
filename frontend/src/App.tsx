@@ -5,6 +5,10 @@ import { LoginPage } from './pages/LoginPage'
 import { AdminLayout } from './components/admin/AdminLayout'
 import { Dashboard } from './pages/admin/Dashboard'
 import { LiveMonitoring } from './pages/admin/LiveMonitoring'
+import { LiveAgentTracking } from './pages/admin/LiveAgentTracking'
+import { AIAgentsPage } from './pages/admin/ai/AIAgentsPage'
+import { AIAgentBuilder } from './pages/admin/ai/AIAgentBuilder'
+import { AICallReviewPage } from './pages/admin/ai/AICallReviewPage'
 import { CampaignsPage } from './pages/admin/CampaignsPage'
 import { CampaignCreate } from './pages/admin/CampaignCreate'
 import { CampaignDetail } from './pages/admin/CampaignDetail'
@@ -41,6 +45,13 @@ export function App() {
             <Route path="/" element={<AdminLayout />}>
               <Route index element={<Dashboard />} />
               <Route path="live-monitoring" element={<LiveMonitoring />} />
+              <Route path="agent-tracking" element={<LiveAgentTracking />} />
+
+              {/* AI Voice Agents */}
+              <Route path="ai-agents" element={<AIAgentsPage />} />
+              <Route path="ai-agents/new" element={<AIAgentBuilder />} />
+              <Route path="ai-agents/:id" element={<AIAgentBuilder />} />
+              <Route path="ai-calls" element={<AICallReviewPage />} />
               
               {/* Voice Campaigns */}
               <Route path="campaigns" element={<CampaignsPage />} />

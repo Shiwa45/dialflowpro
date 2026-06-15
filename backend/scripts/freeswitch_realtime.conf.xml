@@ -1,0 +1,50 @@
+<!--
+  DialFlow Pro — FreeSWITCH configuration for real-time agent tracking.
+
+  The event listener (python manage.py fs_event_listener) connects over the
+  INBOUND event socket and subscribes to sofia registration + channel events.
+  Two things must be true on the FreeSWITCH side:
+
+  1. mod_event_socket is loaded and listening (default port 8021, password
+     matching settings.FREESWITCH_NODES['fs1']['password']).
+  2. The internal sofia profile publishes presence/registration events.
+-->
+
+<!-- ========================================================= -->
+<!-- 1. event_socket.conf.xml  (autoload_configs/)             -->
+<!--    Ensure these match FREESWITCH_NODES in Django settings -->
+<!-- ========================================================= -->
+<configuration name="event_socket.conf" description="Socket Client">
+  <settings>
+    <param name="nat-map" value="false"/>
+    <param name="listen-ip" value="127.0.0.1"/>
+    <param name="listen-port" value="8021"/>
+    <param name="password" value="ClueCon"/>
+    <!-- allow the Django host if not on localhost -->
+    <param name="apply-inbound-acl" value="loopback.auto"/>
+  </settings>
+</configuration>
+
+<!-- ========================================================= -->
+<!-- 2. Internal profile must send register/unregister events  -->
+<!--    sip_profiles/internal.xml  (inside <settings>)          -->
+<!-- ========================================================= -->
+<!--
+    <param name="manage-presence" value="true"/>
+    <param name="presence-hosts" value="$${domain},$${local_ip_v4}"/>
+    <param name="send-presence-on-register" value="true"/>
+-->
+
+<!-- ========================================================= -->
+<!-- 3. (Optional) Dialplan hook so each agent leg carries the -->
+<!--    extension as user_name for the listener to map cleanly.-->
+<!--    dialplan/default.xml                                    -->
+<!-- ========================================================= -->
+<!--
+  <extension name="agent_tag">
+    <condition field="destination_number" expression="^(\d{3,6})$">
+      <action application="set" data="user_name=${dialed_extension}"/>
+      <action application="export" data="user_name=${dialed_extension}"/>
+    </condition>
+  </extension>
+-->

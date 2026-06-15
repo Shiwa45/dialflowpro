@@ -24,66 +24,82 @@ local DTMF_TIMEOUT = 5000  -- 5 seconds in milliseconds
 -- Response storage
 local survey_responses = {}
 
--- Utility: HTTP GET request
-function http_get(url)
-    local curl = require("cURL")
-    local response_body = ""
-    
-    local c = curl.easy{
-        url = url,
-        writefunction = function(str)
-            response_body = response_body .. str
-        end
-    }
-    
-    local ok, err = pcall(function() c:perform() end)
-    c:close()
-    
-    if not ok then
-        freeswitch.consoleLog("err", "HTTP GET failed: " .. err .. "\n")
-        return nil
+-- ── Debug file logger ─────────────────────────────────────────────────────────
+-- Writes a trace to /tmp/dialflow.log (read with: wsl -d Debian -- cat /tmp/dialflow.log)
+-- so we can see exactly what the script does on each call, beyond the FS console.
+local LOG_FILE = os.getenv("DIALFLOW_LOG") or "/tmp/dialflow.log"
+function dlog(msg)
+    freeswitch.consoleLog("INFO", "[dialflow] " .. tostring(msg) .. "\n")
+    local f = io.open(LOG_FILE, "a")
+    if f then
+        f:write(os.date("%Y-%m-%d %H:%M:%S") .. "  " .. tostring(msg) .. "\n")
+        f:close()
     end
-    
-    return response_body
 end
 
--- Utility: HTTP POST request
+-- ── HTTP via the system `curl` binary (no external Lua modules needed) ────────
+-- The lua-cURL binding is NOT installed in this FreeSWITCH build, so we shell
+-- out to /usr/bin/curl via io.popen. Full control over headers (incl X-Tenant)
+-- and no dependency on the `cURL`/`JSON` Lua modules.
+
+-- Single-quote a string safely for the shell.
+local function shq(s)
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+-- Minimal JSON encoder for a FLAT table (string/number/boolean values).
+-- nil values are naturally absent (Lua tables can't hold nil), so optional
+-- fields are simply omitted — the Django webhooks default them.
+local function json_encode_flat(t)
+    local parts = {}
+    for k, v in pairs(t) do
+        local tv, val = type(v), nil
+        if tv == "number" or tv == "boolean" then
+            val = tostring(v)
+        elseif tv == "string" then
+            val = '"' .. v:gsub('\\', '\\\\'):gsub('"', '\\"') .. '"'
+        else
+            val = "null"
+        end
+        parts[#parts + 1] = '"' .. tostring(k) .. '":' .. val
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+-- Utility: HTTP GET request
+function http_get(url)
+    local cmd = "curl -s -m 15 " .. shq(url) .. " 2>/dev/null"
+    local p = io.popen(cmd)
+    if not p then dlog("io.popen failed (GET)"); return nil end
+    local body = p:read("*a")
+    p:close()
+    return body
+end
+
+-- Utility: HTTP POST request (JSON body)
 -- extra_headers: optional list of header strings (e.g. {"X-Tenant: test_tenant"})
 function http_post(url, data, extra_headers)
-    local curl = require("cURL")
-    local json = require("JSON")
-    local response_body = ""
+    local body = json_encode_flat(data)
 
-    local post_data = json:encode(data)
-
-    -- django-tenants routes by Host header; the FreeSWITCH host (an IP) maps
-    -- to no tenant, so we MUST send X-Tenant to reach the right schema.
-    local headers = {"Content-Type: application/json"}
+    local cmd = "curl -s -m 15 -X POST " .. shq(url)
+             .. " -H " .. shq("Content-Type: application/json")
     if extra_headers then
         for _, h in ipairs(extra_headers) do
-            table.insert(headers, h)
+            cmd = cmd .. " -H " .. shq(h)
         end
     end
+    cmd = cmd .. " --data " .. shq(body) .. " 2>/dev/null"
 
-    local c = curl.easy{
-        url = url,
-        post = true,
-        httpheader = headers,
-        postfields = post_data,
-        writefunction = function(str)
-            response_body = response_body .. str
-        end
-    }
-    
-    local ok, err = pcall(function() c:perform() end)
-    c:close()
-    
-    if not ok then
-        freeswitch.consoleLog("err", "HTTP POST failed: " .. err .. "\n")
+    dlog("HTTP POST -> " .. url .. " body=" .. body)
+    local p = io.popen(cmd)
+    if not p then
+        dlog("io.popen failed (POST)")
         return nil
     end
-    
-    return response_body
+    local resp = p:read("*a")
+    p:close()
+    dlog("HTTP POST response: " .. tostring(resp))
+    return resp
 end
 
 -- Fetch survey data from Django
@@ -114,13 +130,13 @@ end
 function find_branch(section, key)
     for _, branch in ipairs(section.branches or {}) do
         if branch.key == key or branch.key == "any" then
-            return branch.goto
+            return branch["goto"]
         end
     end
     -- Check for timeout branch
     for _, branch in ipairs(section.branches or {}) do
         if branch.key == "timeout" then
-            return branch.goto
+            return branch["goto"]
         end
     end
     return nil
@@ -157,7 +173,7 @@ function execute_play_message(session, section)
     
     -- Auto-advance to first branch or nil
     if section.branches and #section.branches > 0 then
-        return section.branches[1].goto
+        return section.branches[1]["goto"]
     end
     return nil
 end
@@ -405,11 +421,13 @@ function post_hangup(session, answered_epoch, disposition)
 
     local hangup_cause = session:hangupCause() or "NORMAL_CLEARING"
     local tenant_schema = session:getVariable("tenant_schema") or ""
+    local agent_id = session:getVariable("dialflow_agent_id")
 
     local payload = {
         callid        = session:get_uuid(),
         request_uuid  = request_uuid,
         tenant_schema = tenant_schema,
+        agent_id      = agent_id and tonumber(agent_id) or nil,
         callerid      = session:getVariable("caller_id_number") or "",
         duration      = billsec,
         billsec       = billsec,
@@ -432,13 +450,11 @@ function route_to_agent(session)
                        or session:getVariable("destination_number")
                        or ""
     local tenant_id    = session:getVariable("tenant_id") or ""
-
-    freeswitch.consoleLog("info",
-        "Predictive routing: call_id=" .. call_id ..
-        " campaign=" .. campaign_id ..
-        " caller=" .. caller_number .. "\n")
-
     local tenant_schema = session:getVariable("tenant_schema") or ""
+
+    dlog("route_to_agent: call_id=" .. call_id .. " campaign=" .. campaign_id ..
+         " tenant_schema=" .. tenant_schema .. " caller=" .. caller_number)
+
     local payload = {
         call_id       = call_id,
         caller_number = caller_number,
@@ -453,23 +469,60 @@ function route_to_agent(session)
         {"X-Tenant: " .. tenant_schema}
     )
     if not response then
-        freeswitch.consoleLog("err", "route-call API unreachable\n")
+        dlog("route-call API unreachable — hanging up")
         return false
     end
 
-    local json = require("JSON")
-    local data = json:decode(response)
-    if not data or not data.available or not data.agent_extension or data.agent_extension == "" then
-        freeswitch.consoleLog("info", "No agent available — hanging up\n")
+    -- Parse the simple flat JSON response with string matching (no JSON module
+    -- dependency). Response shape:
+    --   {"available":true,"agent_id":3,"agent_name":"...","agent_extension":"1001"}
+    local available = response:match('"available"%s*:%s*true') ~= nil
+    local ext       = response:match('"agent_extension"%s*:%s*"([^"]*)"')
+    local agent_id  = response:match('"agent_id"%s*:%s*(%d+)')
+
+    if not available or not ext or ext == "" then
+        dlog("No agent available (response=" .. tostring(response) .. ") — hanging up")
         return false
     end
 
-    local ext = data.agent_extension
-    freeswitch.consoleLog("info", "Bridging to agent extension: " .. ext .. "\n")
+    dlog("Agent found: ext=" .. ext .. " agent_id=" .. tostring(agent_id))
 
-    -- Bridge call to agent's registered SIP phone (XLite / softphone)
+    -- Remember which agent took the call so post_hangup can recycle them
+    -- (returns the agent to Waiting) without depending on fs_event_listener.
+    if agent_id then
+        session:setVariable("dialflow_agent_id", agent_id)
+    end
+
+    -- Resolve the agent's ACTUAL registered SIP contact. Plain
+    -- "sofia/internal/1001" fails with USER_NOT_REGISTERED because the
+    -- profile's default domain doesn't match the phone's registration realm.
+    -- sofia_contact returns the exact contact URI the phone registered with.
+    local api = freeswitch.API()
+    local contact = api:executeString("sofia_contact " .. FS_INTERNAL_PROFILE .. "/" .. ext)
+    contact = (contact or ""):gsub("%s+$", "")
+    local dialstr
+    if contact ~= "" and not contact:find("error") and not contact:find("user_not_registered") then
+        dialstr = contact                       -- e.g. sofia/internal/sip:1001@ip:port;...
+    else
+        dialstr = "user/" .. ext                -- fallback: directory lookup
+    end
+
+    -- Tell the agent desktop the call is now active (panel auto-shows the
+    -- in-call screen — no manual 'Answer' click needed).
+    if agent_id then
+        http_post(
+            API_URL .. "/api/callcenter/call-answered/",
+            { agent_id = tonumber(agent_id), call_id = call_id },
+            {"X-Tenant: " .. tenant_schema}
+        )
+    end
+
+    -- Bridge the customer leg to the agent's phone via the `bridge` app.
+    -- (session:bridge() expects a Session object, so we use execute().)
     local answered_epoch = os.time()
-    session:bridge("sofia/" .. FS_INTERNAL_PROFILE .. "/" .. ext)
+    dlog("executing bridge -> " .. dialstr .. " (sofia_contact=" .. tostring(contact) .. ")")
+    session:execute("bridge", dialstr)
+    dlog("bridge returned (call ended). hangup_cause=" .. tostring(session:hangupCause()))
 
     -- Bridge ended → report hangup so the call completes & frees capacity
     post_hangup(session, answered_epoch, "ANSWER")
@@ -477,15 +530,81 @@ function route_to_agent(session)
 end
 
 
+-- Route an answered call to an AI voice agent via LiveKit SIP.
+-- The customer leg is bridged to the LiveKit gateway; X-* SIP headers carry
+-- the AIAgent id + tenant so LiveKit dispatches the right agent (see the SIP
+-- trunk's headers_to_attributes mapping in livekit_sip_setup.py).
+function route_to_ai(session)
+    local ai_agent_id   = session:getVariable("ai_agent_id") or ""
+    local tenant_schema = session:getVariable("tenant_schema") or ""
+    local caller        = session:getVariable("caller_id_number") or ""
+    dlog("route_to_ai: ai_agent_id=" .. ai_agent_id .. " tenant=" .. tenant_schema ..
+         " caller=" .. caller)
+
+    if ai_agent_id == "" then
+        dlog("route_to_ai: no ai_agent_id — cannot route")
+        return false
+    end
+
+    local gw = os.getenv("LIVEKIT_SIP_GATEWAY") or "livekit"
+
+    -- B-LEG variables must be set inside the dial-string braces — variables
+    -- `set` on the A-leg do NOT appear on the outbound INVITE to LiveKit.
+    --   sip_h_X-*          routing info (trunk maps them to attributes)
+    --   rtp_secure_media   LiveKit Cloud requires SRTP media
+    --   absolute_codec_string  8kHz telephony codec for the worker pipeline
+    -- NOTE: no rtp_secure_media here — LiveKit Cloud answers plain RTP and the
+    -- forced-SRTP offer fails negotiation (INCOMPATIBLE_DESTINATION). TLS
+    -- secures signaling; media runs plain RTP, which LiveKit accepts.
+    local blegvars = table.concat({
+        "sip_h_X-Agent-Id=" .. ai_agent_id,
+        "sip_h_X-Tenant-Schema=" .. tenant_schema,
+        "sip_h_X-Caller-Number=" .. caller,
+        "absolute_codec_string=PCMU",
+    }, ",")
+    -- Dial the FIXED trunk number (must match the LiveKit inbound trunk's
+    -- `numbers`). Which AI agent handles the call rides in X-Agent-Id.
+    local lk_number = os.getenv("LIVEKIT_TRUNK_NUMBER") or "+918000000001"
+    local dialstr = "{" .. blegvars .. "}sofia/gateway/" .. gw .. "/" .. lk_number
+
+    local answered_epoch = os.time()
+    dlog("bridging to LiveKit AI -> " .. dialstr)
+    session:execute("bridge", dialstr)
+
+    -- Did the B-leg actually connect? bridge leaves the result on the A-leg.
+    local disp   = session:getVariable("originate_disposition") or ""
+    local bcause = session:getVariable("bridge_hangup_cause") or ""
+    dlog("AI bridge result: originate_disposition=" .. disp ..
+         " bridge_hangup_cause=" .. bcause)
+
+    local ok = (disp == "SUCCESS") or (bcause == "NORMAL_CLEARING")
+    post_hangup(session, answered_epoch, ok and "ANSWER" or "FAILED")
+    return ok
+end
+
+
 -- Main execution
 function main(session)
+    local dial_mode = tonumber(session:getVariable("dial_mode") or "0")
+    dlog("=== main() entered: dial_mode=" .. tostring(dial_mode) ..
+         " uuid=" .. tostring(session:get_uuid()) ..
+         " answered=" .. tostring(session:answered()))
+
     -- Answer call
     session:answer()
+    dlog("session answered, ready=" .. tostring(session:ready()))
 
-    -- ── Predictive / Progressive mode: route to agent, skip IVR ──
-    local dial_mode = tonumber(session:getVariable("dial_mode") or "0")
+    -- ── Predictive / Progressive mode: route to AI or human, skip IVR ──
     if dial_mode == 1 or dial_mode == 3 then
-        local ok = route_to_agent(session)
+        local ai_agent_id = session:getVariable("ai_agent_id") or ""
+        local ok
+        if ai_agent_id ~= "" then
+            ok = route_to_ai(session)          -- AI campaign → LiveKit
+            dlog("route_to_ai returned ok=" .. tostring(ok))
+        else
+            ok = route_to_agent(session)       -- human campaign → softphone
+            dlog("route_to_agent returned ok=" .. tostring(ok))
+        end
         if not ok then
             session:hangup("NO_USER_RESPONSE")
         end

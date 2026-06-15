@@ -109,6 +109,41 @@ class ESLClient:
 
         return ESLResponse(headers, data)
 
+    # ── event stream (listener mode) ────────────────────────────
+    def set_read_timeout(self, t):
+        """Adjust the socket read timeout (None = block indefinitely)."""
+        if self._sock:
+            self._sock.settimeout(t)
+
+    def subscribe(self, event_args: str) -> ESLResponse:
+        """Subscribe to FreeSWITCH events (e.g. 'plain CHANNEL_CREATE CUSTOM ...').
+
+        Use on a DEDICATED connection (not the shared pool) — the caller then
+        loops on recv_event(). Returns the command reply.
+        """
+        if not self.connected:
+            self.connect()
+        self._send_raw(f'event {event_args}')
+        return self._read_event()
+
+    def recv_event(self) -> ESLResponse:
+        """Read one frame from the event stream.
+
+        For 'text/event-plain' frames the real event is in the body, so we parse
+        it into the returned ESLResponse.headers (URL-decoded). No lock — this is
+        only safe on a dedicated listener connection with a single reader.
+        """
+        frame = self._read_event()
+        if frame.headers.get('Content-Type') == 'text/event-plain' and frame.data:
+            from urllib.parse import unquote
+            ev = {}
+            for line in frame.data.splitlines():
+                if ': ' in line:
+                    key, val = line.split(': ', 1)
+                    ev[key.strip()] = unquote(val.strip())
+            return ESLResponse(ev, frame.data)
+        return frame
+
     # ── public API ──────────────────────────────────────────────
     def send(self, command: str) -> ESLResponse:
         """Send a command and return the reply. Reconnects once if the socket died."""

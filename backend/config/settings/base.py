@@ -76,6 +76,7 @@ TENANT_APPS = [
     'apps.survey',
     'apps.mod_sms',
     'apps.callcenter',
+    'apps.ai_agent',             # AI voice agents (per-tenant data, isolated)
 ]
 
 INSTALLED_APPS = list(SHARED_APPS) + TENANT_APPS
@@ -280,6 +281,26 @@ FS_DIRECTORY_DIR = env(
 
 # Dialer Engine
 NEWFIES_DIALER_ENGINE = 'esl'  # Reference to original
+
+
+# ── AI Voice Agents ───────────────────────────────────────────────────────────
+# Provider keys (platform-level defaults used by the media worker).
+SARVAM_API_KEY = env('SARVAM_API_KEY', default='')
+GEMINI_API_KEY = env('GEMINI_API_KEY', default='')
+
+# LiveKit (Phase 2 media worker)
+LIVEKIT_URL = env('LIVEKIT_URL', default='')
+LIVEKIT_API_KEY = env('LIVEKIT_API_KEY', default='')
+LIVEKIT_API_SECRET = env('LIVEKIT_API_SECRET', default='')
+
+# Shared secret the media worker uses to authenticate to the worker REST surface.
+# MUST match AI_WORKER_TOKEN in the worker's .env.
+AI_WORKER_TOKEN = env('AI_WORKER_TOKEN', default='')
+
+# Embedding provider for the knowledge base: sarvam | gemini | local | none
+AI_EMBEDDING_PROVIDER = env('AI_EMBEDDING_PROVIDER', default='none')
+AI_LOCAL_EMBEDDING_MODEL = env('AI_LOCAL_EMBEDDING_MODEL', default='all-MiniLM-L6-v2')
+AI_GEMINI_EMBEDDING_MODEL = env('AI_GEMINI_EMBEDDING_MODEL', default='text-embedding-004')
 
 
 # Phone Number Configuration

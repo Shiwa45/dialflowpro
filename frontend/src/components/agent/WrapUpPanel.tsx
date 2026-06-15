@@ -12,7 +12,6 @@ import {
 export function WrapUpPanel() {
   const { activeCall, wrapUpTime, callDuration, dispositions } = useAgentDesktopStore()
   const { setDisposition } = useAgentCommands()
-  const store = useAgentDesktopStore()
 
   const [selectedDisp, setSelectedDisp] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
@@ -25,11 +24,6 @@ export function WrapUpPanel() {
       setDisposition(activeCall.call_id, selectedDisp, notes)
       setSubmitted(true)
     }
-  }
-
-  const handleSkip = () => {
-    store.setActiveCall(null)
-    store.setWrapUpTime(0)
   }
 
   if (submitted) {
@@ -104,22 +98,19 @@ export function WrapUpPanel() {
           />
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-3">
-          <button
-            onClick={handleSkip}
-            className="flex-1 py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm font-medium transition-colors"
-          >
-            Skip
-          </button>
+        {/* Action — disposition is mandatory; no skipping to the next call */}
+        <div className="flex flex-col gap-2">
           <button
             onClick={handleSubmit}
             disabled={!selectedDisp}
-            className="flex-1 flex items-center justify-center gap-2 py-3 px-4 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-xl text-sm font-medium transition-colors"
+            className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-xl text-sm font-medium transition-colors"
           >
             <Send className="w-4 h-4" />
-            Save & Continue
+            Save Disposition &amp; Continue
           </button>
+          <p className="text-center text-xs text-gray-600">
+            You must select a disposition to take the next call.
+          </p>
         </div>
       </div>
     </div>

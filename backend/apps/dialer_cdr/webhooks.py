@@ -141,8 +141,34 @@ def _hangup_webhook_inner(request, data):
                     subscriber.status = SubscriberStatus.FAIL
                     subscriber.save(update_fields=['status'])
         
+        # Move the serving agent into WRAP-UP (after-call work), NOT straight
+        # back to Waiting. They stay off the pacer (state != Waiting) until they
+        # submit a disposition, which sets them Waiting again (see consumer
+        # _save_disposition). Also push call_ended to the agent's desktop so the
+        # panel shows the wrap-up form when the softphone call disconnects.
+        agent_id = data.get('agent_id')
+        if agent_id:
+            from apps.callcenter.models import Agent
+            from apps.callcenter.constants import AgentState
+            Agent.objects.filter(id=agent_id).update(
+                state=AgentState.IDLE,          # = wrap-up / after-call work
+                last_bridge_end=timezone.now(),
+            )
+            try:
+                from channels.layers import get_channel_layer
+                from asgiref.sync import async_to_sync
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(f'agent_desktop_{agent_id}', {
+                    'type': 'call_ended',
+                    'call_id': callid,
+                    'duration': billsec,
+                    'hangup_cause': hangup_cause,
+                })
+            except Exception as exc:
+                logger.warning(f"Could not push call_ended to agent {agent_id}: {exc}")
+
         logger.info(f"Hangup processed: {callid}, disposition={disposition}")
-        
+
         return JsonResponse({
             'status': 'ok',
             'callid': callid,

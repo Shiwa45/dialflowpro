@@ -98,6 +98,8 @@ def _build_dial_string(cr: Callrequest, gateway, tenant_schema: str = '') -> str
             'tenant_schema': tenant_schema,
             'dial_mode':     cr.campaign.dial_mode,
             'queue_id':      cr.campaign.queue_id or '',
+            # If set, the answered call is handled by this AI agent (LiveKit)
+            'ai_agent_id':   cr.campaign.ai_agent_id or '',
         })
 
     vars_str = ','.join(f"{k}={v}" for k, v in vars_dict.items())

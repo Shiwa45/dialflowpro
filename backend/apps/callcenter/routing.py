@@ -12,4 +12,7 @@ websocket_urlpatterns = [
 
     # Agent desktop — bidirectional, per-agent channel
     re_path(r'ws/callcenter/agent-desktop/$', consumers.AgentDesktopConsumer.as_asgi()),
+
+    # Supervisor per-agent monitor channel (listen/whisper/barge indicators)
+    re_path(r'ws/callcenter/monitor/(?P<agent_id>\d+)/$', consumers.AgentMonitorConsumer.as_asgi()),
 ]

@@ -39,6 +39,8 @@ const DEFAULT_FORM = {
   caller_name: '',
   dial_mode: 1,
   queue: '',
+  ai_agent: '',
+  ai_max_concurrent: 5,
   startingdate: '',
   expirationdate: '',
   daily_start_time: '09:00',
@@ -52,6 +54,7 @@ const DEFAULT_FORM = {
   sunday: false,
   frequency: 10,
   lines_per_agent: 1,
+  allow_duplicate_contacts: false,
   calltimeout: 30,
   callmaxduration: 1800,
   maxretry: 3,
@@ -79,6 +82,7 @@ export function CampaignCreate() {
   const [gateways, setGateways] = useState<any[]>([])
   const [dncLists, setDncLists] = useState<any[]>([])
   const [queues, setQueues] = useState<any[]>([])
+  const [aiAgents, setAiAgents] = useState<any[]>([])
   const [phonebookError, setPhonebookError] = useState(false)
   const [formData, setFormData] = useState({ ...DEFAULT_FORM })
 
@@ -89,12 +93,19 @@ export function CampaignCreate() {
 
   const fetchOptions = async () => {
     // Use allSettled so a failed gateway/DNC endpoint never prevents phonebooks loading
-    const [pbResult, gwResult, dncResult, qResult] = await Promise.allSettled([
+    const [pbResult, gwResult, dncResult, qResult, aiResult] = await Promise.allSettled([
       api.get('/dialer-contact/phonebooks/'),
       api.get('/dialer-gateway/gateways/'),
       api.get('/dnc/dnc/'),
       api.get('/callcenter/queues/'),
+      api.get('/ai/agents/'),
     ])
+
+    if (aiResult.status === 'fulfilled') {
+      setAiAgents(aiResult.value.data.results ?? aiResult.value.data)
+    } else {
+      console.error('Failed to fetch AI agents:', aiResult.reason)
+    }
 
     if (pbResult.status === 'fulfilled') {
       setPhonebooks(pbResult.value.data.results ?? pbResult.value.data)
@@ -134,6 +145,8 @@ export function CampaignCreate() {
         caller_name:        data.caller_name     ?? '',
         dial_mode:          data.dial_mode       ?? 1,
         queue:              data.queue != null ? String(data.queue) : '',
+        ai_agent:           data.ai_agent != null ? String(data.ai_agent) : '',
+        ai_max_concurrent:  data.ai_max_concurrent ?? 5,
         startingdate:       toDatetimeLocal(data.startingdate),
         expirationdate:     toDatetimeLocal(data.expirationdate),
         daily_start_time:   data.daily_start_time?.slice(0, 5) ?? '09:00',
@@ -147,6 +160,7 @@ export function CampaignCreate() {
         sunday:    data.sunday    ?? false,
         frequency:        data.frequency        ?? 10,
         lines_per_agent:  data.lines_per_agent   ?? 1,
+        allow_duplicate_contacts: data.allow_duplicate_contacts ?? false,
         calltimeout:      data.calltimeout       ?? 30,
         callmaxduration:  data.callmaxduration   ?? 1800,
         maxretry:         data.maxretry          ?? 3,
@@ -175,6 +189,7 @@ export function CampaignCreate() {
       ...formData,
       dial_mode:    Number(formData.dial_mode),
       queue:        formData.queue        ? Number(formData.queue)        : null,
+      ai_agent:     formData.ai_agent     ? Number(formData.ai_agent)     : null,
       phonebook:    formData.phonebook.map(Number),
       aleg_gateway: formData.aleg_gateway ? Number(formData.aleg_gateway) : null,
       dnc:          formData.dnc          ? Number(formData.dnc)          : null,
@@ -348,7 +363,7 @@ export function CampaignCreate() {
                     value={formData.queue}
                     onChange={(e) => set({ queue: e.target.value })}
                     className={inputCls}
-                    required={formData.dial_mode === 1 || formData.dial_mode === 3}
+                    required={(formData.dial_mode === 1 || formData.dial_mode === 3) && !formData.ai_agent}
                   >
                     <option value="">Select a queue…</option>
                     {queues.map((q: any) => (
@@ -357,6 +372,42 @@ export function CampaignCreate() {
                       </option>
                     ))}
                   </select>
+                )}
+              </div>
+            )}
+
+            {/* AI agent — answered calls handled by AI instead of a human */}
+            {(formData.dial_mode === 1 || formData.dial_mode === 3) && (
+              <div>
+                <label className={labelCls}>
+                  Handle with AI agent{' '}
+                  <span className="ml-2 text-xs text-gray-500 font-normal">
+                    Optional — if set, answered calls go to this AI agent (LiveKit) instead of the queue
+                  </span>
+                </label>
+                <select
+                  value={formData.ai_agent}
+                  onChange={(e) => set({ ai_agent: e.target.value })}
+                  className={inputCls}
+                >
+                  <option value="">No AI — route to human agents</option>
+                  {aiAgents.map((a: any) => (
+                    <option key={a.id} value={String(a.id)}>
+                      {a.name} ({a.status_display})
+                    </option>
+                  ))}
+                </select>
+                {formData.ai_agent && (
+                  <div className="mt-3">
+                    <label className={labelCls}>Max concurrent AI calls</label>
+                    <input
+                      type="number"
+                      value={formData.ai_max_concurrent}
+                      onChange={(e) => set({ ai_max_concurrent: Number(e.target.value) })}
+                      className={inputCls}
+                      min="1" max="100"
+                    />
+                  </div>
                 )}
               </div>
             )}
@@ -498,6 +549,22 @@ export function CampaignCreate() {
                   </p>
                 </div>
               )}
+
+              <div className="md:col-span-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.allow_duplicate_contacts}
+                    onChange={(e) => set({ allow_duplicate_contacts: e.target.checked })}
+                    className="w-4 h-4 rounded border-gray-600 bg-gray-800"
+                  />
+                  <span className={labelCls + ' mb-0'}>Allow duplicate phone numbers</span>
+                </label>
+                <p className="text-xs text-gray-500 mt-1">
+                  Off (default): the same number is called once even if it appears many times in the phonebook.
+                  On: every contact row becomes a call — useful for testing or intentional re-attempts.
+                </p>
+              </div>
 
               <div>
                 <label className={labelCls}>Call Timeout (seconds)</label>

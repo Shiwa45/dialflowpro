@@ -102,6 +102,19 @@ def campaign_spool_contact(campaign_id: int, tenant_schema: str = '') -> bool:
         if stale_subs:
             logger.info(f"Recovered {len(stale_subs)} stale IN_PROCESS subscriber(s)")
 
+        # ── Auto-collect newly added contacts ─────────────────────────────
+        # When the campaign has no pending subscribers, re-scan the linked
+        # phonebooks so contacts added AFTER the campaign started get turned
+        # into subscribers and dialed (collect dedupes by number, so this is
+        # idempotent and cheap).
+        if not Subscriber.objects.filter(
+            campaign=campaign, status=SubscriberStatus.PENDING
+        ).exists():
+            try:
+                collect_subscriber(campaign_id, tenant_schema)
+            except Exception as exc:
+                logger.warning(f"auto-collect failed for campaign {campaign_id}: {exc}")
+
         # ── Frequency (upper cap) ─────────────────────────────────────────
         frequency = campaign.frequency
         if getattr(settings, 'HEARTBEAT_MIN', 1) > 1:
@@ -109,10 +122,30 @@ def campaign_spool_contact(campaign_id: int, tenant_schema: str = '') -> bool:
         logger.info(f"'{campaign.name}' frequency cap={frequency}")
 
         # ── Call pacing ───────────────────────────────────────────────────
-        # For agent modes, dial only what available agents can handle.
-        # Capacity = available_agents × lines_per_agent − calls_still_ringing.
         claim_limit = frequency
-        if campaign.dial_mode in (DialMode.PREDICTIVE, DialMode.PROGRESSIVE) and campaign.queue_id:
+
+        if campaign.ai_agent_id:
+            # AI campaign: no human presence to pace against. Cap the number of
+            # simultaneous calls at ai_max_concurrent (each uses one AI session).
+            active_window = timezone.now() - timedelta(seconds=(campaign.callmaxduration or 600))
+            active = Callrequest.objects.filter(
+                campaign=campaign,
+                status=CallrequestStatus.CALLING,
+                last_attempt_time__gte=active_window,
+            ).count()
+            cap = max(campaign.ai_max_concurrent, 1)
+            claim_limit = max(0, min(cap - active, frequency))
+            logger.info(
+                f"'{campaign.name}' AI pacing: max_concurrent={cap} "
+                f"active={active} → dialing {claim_limit}"
+            )
+            if claim_limit == 0:
+                logger.info(f"'{campaign.name}': AI at max concurrency — skipping")
+                return False
+
+        # For human agent modes, dial only what available agents can handle.
+        # Capacity = available_agents × lines_per_agent − calls_still_ringing.
+        elif campaign.dial_mode in (DialMode.PREDICTIVE, DialMode.PROGRESSIVE) and campaign.queue_id:
             from apps.callcenter.services import count_available_agents, get_registered_extensions
 
             registered = get_registered_extensions()
@@ -259,7 +292,15 @@ def collect_subscriber(campaign_id: int, tenant_schema: str = '') -> bool:
             for contact in contacts:
                 phone = str(contact.contact)
 
-                if Subscriber.objects.filter(campaign=campaign, duplicate_contact=phone).exists():
+                # Skip numbers already imported for this campaign — unless the
+                # campaign explicitly allows duplicate numbers. Dedup is keyed on
+                # the contact row (not the number) when duplicates are allowed,
+                # so re-running collect stays idempotent.
+                if getattr(campaign, 'allow_duplicate_contacts', False):
+                    if Subscriber.objects.filter(campaign=campaign, contact=contact).exists():
+                        skipped += 1
+                        continue
+                elif Subscriber.objects.filter(campaign=campaign, duplicate_contact=phone).exists():
                     skipped += 1
                     continue
 

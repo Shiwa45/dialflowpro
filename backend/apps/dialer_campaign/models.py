@@ -96,6 +96,26 @@ class Campaign(TimeStampedModel):
         help_text=_('Queue that receives answered calls from this campaign')
     )
 
+    # AI agent — if set, answered calls are handled by this AI voice agent
+    # (bridged to LiveKit) instead of a human agent in the queue.
+    ai_agent = models.ForeignKey(
+        'ai_agent.AIAgent',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='campaigns',
+        verbose_name=_('AI agent'),
+        help_text=_('If set, answered calls are handled by this AI agent instead of a human')
+    )
+
+    # Max simultaneous AI calls (AI has no SIP presence to pace against, so this
+    # caps concurrency for AI campaigns).
+    ai_max_concurrent = models.PositiveIntegerField(
+        default=5,
+        verbose_name=_('max concurrent AI calls'),
+        help_text=_('How many AI calls can run at once for this campaign')
+    )
+
     # Caller ID
     callerid = models.CharField(
         max_length=80,
@@ -152,7 +172,17 @@ class Campaign(TimeStampedModel):
         verbose_name=_('lines per agent'),
         help_text=_('Simultaneous calls to dial per available agent (1 = progressive, 2-3 = predictive)')
     )
-    
+
+    # When False (default), a phone number that appears multiple times in the
+    # phonebook(s) is imported as a single Subscriber — you don't want to
+    # auto-dial the same person repeatedly. Set True to dial every contact row
+    # (useful for testing with a repeated number, or intentional re-attempts).
+    allow_duplicate_contacts = models.BooleanField(
+        default=False,
+        verbose_name=_('allow duplicate numbers'),
+        help_text=_('Import every contact row even if the phone number repeats (default: dedupe to one call per number)')
+    )
+
     calltimeout = models.PositiveIntegerField(
         default=30,
         verbose_name=_('call timeout'),

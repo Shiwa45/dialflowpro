@@ -331,3 +331,48 @@ def route_call(request):
     except Exception as exc:
         logger.exception(f'route_call error: {exc}')
         return Response({'error': str(exc)}, status=500)
+
+
+# ── FreeSWITCH webhook: agent call answered (push to the agent desktop) ────────
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def agent_call_event(request):
+    """
+    Called by the Lua bridge to notify the agent desktop that the bridged call
+    is now active (agent's softphone connected). Broadcasts `call_answered` to
+    the agent's personal desktop channel so the panel auto-transitions to the
+    in-call screen — no manual 'Answer' click needed.
+    """
+    agent_id = request.data.get('agent_id')
+    call_id = request.data.get('call_id', '')
+    if not agent_id:
+        return Response({'error': 'agent_id required'}, status=400)
+
+    try:
+        # Mark the agent as on-call so the tracking page shows "On Call"
+        # (not "Ringing"). Runs in the tenant schema the X-Tenant header set.
+        agent = Agent.objects.filter(id=agent_id).first()
+        if agent:
+            agent.state = AgentState.IN_A_QUEUE_CALL
+            agent.last_bridge_start = timezone.now()
+            agent.save(update_fields=['state', 'last_bridge_start'])
+            # Broadcast to admin tracking/dashboard (real-time status)
+            try:
+                from .realtime import broadcast_agent_status, broadcast_dashboard_snapshot
+                broadcast_agent_status(agent)
+                broadcast_dashboard_snapshot()
+            except Exception:
+                pass
+
+        # Push to the agent's own desktop so the panel shows the in-call screen
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(f'agent_desktop_{agent_id}', {
+            'type': 'call_answered',
+            'call_id': call_id,
+            'status': 'answered',
+            'agent_state': AgentState.IN_A_QUEUE_CALL,
+        })
+        return Response({'status': 'ok'})
+    except Exception as exc:
+        logger.error(f'agent_call_event error: {exc}')
+        return Response({'error': str(exc)}, status=500)
