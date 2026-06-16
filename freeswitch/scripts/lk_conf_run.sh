@@ -1,9 +1,16 @@
 #!/bin/sh
 # Write configs and launch livekit-server + livekit-sip in WSL.
+#
+# The LiveKit API secret is NOT hardcoded — set it before running and keep it
+# in sync with LIVEKIT_API_SECRET in .env / ai_worker/.env:
+#   LK_API_KEY=dialflowkey LK_API_SECRET=<secret> sh lk_conf_run.sh
 set -e
 cd /opt/dialflow/livekit
 
-cat > livekit.yaml << 'EOF'
+: "${LK_API_KEY:=dialflowkey}"
+: "${LK_API_SECRET:?set LK_API_SECRET (must match LIVEKIT_API_SECRET in .env)}"
+
+cat > livekit.yaml << EOF
 port: 7880
 bind_addresses:
   - 0.0.0.0
@@ -15,14 +22,14 @@ rtc:
 redis:
   address: 127.0.0.1:6379
 keys:
-  dialflowkey: c4VSDWKaKJ8sE0ZfiyJ9E3RuweBqaLByzm41mDi7mrM
+  ${LK_API_KEY}: ${LK_API_SECRET}
 logging:
   level: info
 EOF
 
-cat > sip.yaml << 'EOF'
-api_key: dialflowkey
-api_secret: c4VSDWKaKJ8sE0ZfiyJ9E3RuweBqaLByzm41mDi7mrM
+cat > sip.yaml << EOF
+api_key: ${LK_API_KEY}
+api_secret: ${LK_API_SECRET}
 ws_url: ws://127.0.0.1:7880
 redis:
   address: 127.0.0.1:6379
