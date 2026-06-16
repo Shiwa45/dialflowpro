@@ -18,28 +18,18 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
 # Task queues configuration
+# Patterns match against the task NAME (the name= kwarg in @shared_task),
+# not the Python module path — so use the actual registered task names.
 app.conf.task_routes = {
-    'apps.dialer_campaign.tasks.*': {'queue': 'campaigns'},
-    'apps.dialer_cdr.tasks.*': {'queue': 'calls'},
-    'apps.mod_sms.tasks.*': {'queue': 'sms'},
-    'apps.appointment.tasks.*': {'queue': 'appointments'},
+    'dialer_campaign.*':  {'queue': 'campaigns'},
+    'dialer_cdr.*':       {'queue': 'calls'},
+    'sms_campaign_*':     {'queue': 'sms'},
+    'sms_send_*':         {'queue': 'sms'},
 }
 
-# Beat schedule configuration
-# Note: This is the default schedule. In production, use django-celery-beat
-# to manage schedules via the database for dynamic configuration.
-app.conf.beat_schedule = {
-    'campaign-heartbeat': {
-        'task': 'dialer_campaign.campaign_running',
-        'schedule': 60.0,  # Run every 60 seconds (adjustable via HEARTBEAT_MIN)
-        'options': {'queue': 'campaigns'}
-    },
-    'sms-campaign-heartbeat': {
-        'task': 'sms_campaign_running',
-        'schedule': 60.0,  # Run every 60 seconds
-        'options': {'queue': 'sms'}
-    },
-}
+# Beat schedule lives in settings.CELERY_BEAT_SCHEDULE (config/settings/base.py),
+# which is loaded via config_from_object above. Defining app.conf.beat_schedule
+# here would be overridden by that settings value, so keep a single source there.
 
 
 @app.task(bind=True, ignore_result=True)

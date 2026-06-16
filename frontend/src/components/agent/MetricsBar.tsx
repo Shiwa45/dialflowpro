@@ -1,66 +1,123 @@
-import { Users, Clock, PhoneIncoming, Timer, TrendingUp } from 'lucide-react'
+import { useAgentDesktopStore } from '@/store/agentDesktopStore'
+import { formatDuration } from '@/lib/utils'
+import {
+  Phone,
+  Clock,
+  PhoneIncoming,
+  Timer,
+  TrendingUp,
+  Wifi,
+  WifiOff,
+} from 'lucide-react'
+import { useWebSocket } from '@/hooks/useWebSocket'
 
 export function MetricsBar() {
-  return (
-    <div className="bg-[#111827] border-b border-gray-800 px-6 py-4">
-      <div className="grid grid-cols-5 gap-4">
-        <MetricCard
-          icon={<Users className="w-5 h-5 text-blue-400" />}
-          label="Calls in Queue"
-          value="05"
-        />
-        <MetricCard
-          icon={<Clock className="w-5 h-5 text-gray-400" />}
-          label="Longest Wait Time"
-          value="02:15"
-        />
-        <MetricCard
-          icon={<PhoneIncoming className="w-5 h-5 text-blue-400" />}
-          label="Answered Today"
-          value="18"
-        />
-        <MetricCard
-          icon={<Timer className="w-5 h-5 text-gray-400" />}
-          label="Average Handle Time"
-          value="06:42"
-        />
-        <MetricCard
-          icon={<TrendingUp className="w-5 h-5 text-green-500" />}
-          label="Service Level"
-          value="88%"
-          valueColor="text-green-500"
-        />
-      </div>
-    </div>
-  )
-}
+  const { agent, queues, todayStats, wsStatus } = useAgentDesktopStore()
 
-function MetricCard({
-  icon,
-  label,
-  value,
-  valueColor = 'text-white',
-}: {
-  icon: React.ReactNode
-  label: string
-  value: string
-  valueColor?: string
-}) {
+  const totalWaiting = queues.reduce((sum, q) => sum + (q.waiting_calls || 0), 0)
+
+  const metrics = [
+    {
+      icon: PhoneIncoming,
+      label: 'In Queue',
+      value: String(totalWaiting),
+      color: totalWaiting > 0 ? 'text-orange-400' : 'text-gray-400',
+      pulse: totalWaiting > 3,
+    },
+    {
+      icon: Phone,
+      label: 'Answered Today',
+      value: String(todayStats.calls),
+      color: 'text-blue-400',
+    },
+    {
+      icon: Timer,
+      label: 'Avg Handle',
+      value: todayStats.avg_duration > 0 ? formatDuration(Math.round(todayStats.avg_duration)) : '—',
+      color: 'text-cyan-400',
+    },
+    {
+      icon: Clock,
+      label: 'Talk Time',
+      value: formatDuration(todayStats.duration),
+      color: 'text-purple-400',
+    },
+    {
+      icon: TrendingUp,
+      label: 'Total Calls',
+      value: String(agent?.calls_answered ?? 0),
+      color: 'text-green-400',
+    },
+  ]
+
   return (
-    <div className="bg-[#1F2937] border border-gray-700 rounded-lg p-4">
+    <header className="h-14 bg-[#111827] border-b border-gray-800 px-6 flex items-center justify-between flex-shrink-0">
+      {/* Left — Agent identity */}
       <div className="flex items-center gap-3">
-        <div className="p-2 bg-gray-800/50 rounded">
-          {icon}
+        <div className="flex items-center gap-2">
+          <Phone className="w-4 h-4 text-blue-500" />
+          <span className="text-white font-semibold text-sm">Agent Desktop</span>
         </div>
-        <div className="flex-1">
-          <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">
-            {label}
-          </div>
-          <div className={`text-2xl font-bold ${valueColor}`}>
-            {value}
-          </div>
+        <div className="h-5 w-px bg-gray-700" />
+        <div className="flex items-center gap-2">
+          <div
+            className={`w-2 h-2 rounded-full ${
+              agent?.status === 1
+                ? 'bg-green-500 animate-pulse'
+                : agent?.status === 2
+                  ? 'bg-yellow-500'
+                  : 'bg-gray-500'
+            }`}
+          />
+          <span className="text-xs text-gray-300 font-medium">
+            {agent?.name || '—'}
+          </span>
+          <span className="text-xs text-gray-600">
+            ext. {agent?.sip_extension || '—'}
+          </span>
         </div>
       </div>
-    </div>
+
+      {/* Center — Metrics */}
+      <div className="flex items-center gap-6">
+        {metrics.map((m) => (
+          <div key={m.label} className="flex items-center gap-2">
+            <m.icon className={`w-3.5 h-3.5 ${m.color}`} />
+            <div className="flex flex-col">
+              <span
+                className={`text-sm font-bold leading-none ${m.color} ${
+                  m.pulse ? 'animate-pulse' : ''
+                }`}
+              >
+                {m.value}
+              </span>
+              <span className="text-[10px] text-gray-600 leading-none mt-0.5">
+                {m.label}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Right — Connection status */}
+      <div className="flex items-center gap-2">
+        {wsStatus === 'connected' ? (
+          <>
+            <Wifi className="w-3.5 h-3.5 text-green-500" />
+            <span className="text-xs text-green-500 font-medium">Live</span>
+          </>
+        ) : wsStatus === 'reconnecting' ? (
+          <>
+            <WifiOff className="w-3.5 h-3.5 text-yellow-500 animate-pulse" />
+            <span className="text-xs text-yellow-500 font-medium">Reconnecting…</span>
+          </>
+        ) : (
+          <>
+            <WifiOff className="w-3.5 h-3.5 text-red-500" />
+            <span className="text-xs text-red-400 font-medium">Offline</span>
+          </>
+        )}
+      </div>
+    </header>
   )
 }

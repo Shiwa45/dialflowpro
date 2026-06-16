@@ -1,0 +1,58 @@
+<!--
+  DialFlow Pro — FreeSWITCH dialplan: route AI-enabled DIDs into LiveKit.
+
+  Place in dialplan/public/ (or wherever inbound DIDs are handled) and adjust:
+    - the destination_number regex to match your AI DIDs
+    - LIVEKIT_SIP_HOST: your LiveKit SIP signaling host
+        Cloud:  <project>.sip.livekit.cloud
+        Self:   the host:port of your self-hosted LiveKit SIP service
+    - X-Agent-Id / X-Tenant-Schema: which AIAgent + tenant this DID maps to.
+      In production, look these up (e.g. an FS Lua lookup against Django) rather
+      than hardcoding. Shown hardcoded here for clarity.
+
+  The custom SIP headers are carried into LiveKit and surfaced on the SIP
+  participant; the dispatch rule / worker reads agent_id + tenant_schema from
+  them (see livekit_sip_setup.py and main.py _extract_call_meta).
+-->
+<include>
+  <context name="public">
+
+    <!-- Example: any 1-800-AI DID in the 1860xxxx range goes to the AI agent -->
+    <extension name="ai_agent_inbound">
+      <condition field="destination_number" expression="^(1860\d+)$">
+
+        <!-- Carry routing info to LiveKit as SIP headers.
+             Replace the static values with a Lua/HTTP lookup keyed on
+             ${destination_number} to resolve the right agent_id + tenant. -->
+        <action application="set" data="sip_h_X-Agent-Id=12"/>
+        <action application="set" data="sip_h_X-Tenant-Schema=acme"/>
+        <action application="set" data="sip_h_X-Caller-Number=${caller_id_number}"/>
+
+        <!-- Use 8kHz/PCMU (mulaw) — matches the worker's telephony TTS/STT. -->
+        <action application="set" data="absolute_codec_string=PCMU"/>
+
+        <!-- Bridge to LiveKit SIP. The LiveKit inbound trunk + dispatch rule
+             create the room and dispatch the dialflow-ai agent. -->
+        <action application="bridge"
+                data="sofia/gateway/livekit/${destination_number}@${LIVEKIT_SIP_HOST}"/>
+      </condition>
+    </extension>
+
+  </context>
+</include>
+
+<!--
+  Gateway definition (sip_profiles/external/livekit.xml) — points FreeSWITCH at
+  LiveKit SIP. Self-hosted: set realm/proxy to your server. Cloud: to the
+  project SIP host. Credentials come from your LiveKit SIP trunk config.
+
+  <include>
+    <gateway name="livekit">
+      <param name="realm"    value="$${LIVEKIT_SIP_HOST}"/>
+      <param name="proxy"    value="$${LIVEKIT_SIP_HOST}"/>
+      <param name="register" value="false"/>
+      <param name="username" value="$${LIVEKIT_SIP_USER}"/>
+      <param name="password" value="$${LIVEKIT_SIP_PASS}"/>
+    </gateway>
+  </include>
+-->

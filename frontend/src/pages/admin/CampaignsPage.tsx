@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Plus, Play, Pause, Square, Eye, Pencil, Trash2,
+  Plus, Play, Pause, Square, Eye, Pencil, Trash2, RotateCcw,
   Phone, Clock, Search, RefreshCw, AlertTriangle,
   CheckCircle, TrendingUp, Users,
 } from 'lucide-react'
@@ -91,10 +91,13 @@ export function CampaignsPage() {
 
   useEffect(() => { fetchCampaigns() }, [fetchCampaigns])
 
-  const handleAction = async (id: number, action: 'start' | 'pause' | 'stop') => {
+  const handleAction = async (id: number, action: 'start' | 'pause' | 'stop' | 'reset') => {
     setActionLoading(id)
     try {
-      await api.post(`/dialer-campaign/campaigns/${id}/${action}/`)
+      const { data } = await api.post(`/dialer-campaign/campaigns/${id}/${action}/`)
+      if (action === 'reset') {
+        alert(`Campaign reset — ${data.pending_now} contact(s) ready to dial again.`)
+      }
       await fetchCampaigns(true)
     } catch (err) {
       console.error(`Failed to ${action}:`, err)
@@ -227,6 +230,7 @@ export function CampaignsPage() {
                   onStart={() => handleAction(c.id, 'start')}
                   onPause={() => handleAction(c.id, 'pause')}
                   onStop={() => handleAction(c.id, 'stop')}
+                  onReset={() => handleAction(c.id, 'reset')}
                   onView={() => navigate(`/campaigns/${c.id}`)}
                   onEdit={() => navigate(`/campaigns/${c.id}/edit`)}
                   onDelete={() => setDeleteTarget(c)}
@@ -250,10 +254,10 @@ export function CampaignsPage() {
 
 function CampaignRow({
   campaign, busy,
-  onStart, onPause, onStop, onView, onEdit, onDelete,
+  onStart, onPause, onStop, onReset, onView, onEdit, onDelete,
 }: {
   campaign: any; busy: boolean
-  onStart: () => void; onPause: () => void; onStop: () => void
+  onStart: () => void; onPause: () => void; onStop: () => void; onReset: () => void
   onView: () => void; onEdit: () => void; onDelete: () => void
 }) {
   const isRunning = campaign.status === 3
@@ -279,7 +283,24 @@ function CampaignRow({
             >
               {campaign.name}
             </button>
-            <div className="text-xs text-gray-600 font-mono mt-0.5">{campaign.campaign_code}</div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xs text-gray-600 font-mono">{campaign.campaign_code}</span>
+              {campaign.dial_mode_display && (
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                  campaign.dial_mode === 1 ? 'text-blue-400 bg-blue-500/10 border-blue-500/20' :
+                  campaign.dial_mode === 2 ? 'text-purple-400 bg-purple-500/10 border-purple-500/20' :
+                  campaign.dial_mode === 3 ? 'text-green-400 bg-green-500/10 border-green-500/20' :
+                  'text-gray-400 bg-gray-700/50 border-gray-700'
+                }`}>
+                  {campaign.dial_mode_display}
+                </span>
+              )}
+              {campaign.queue_name && (
+                <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700">
+                  {campaign.queue_name}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </td>
@@ -327,6 +348,7 @@ function CampaignRow({
           {!isRunning && !isEnded && (
             <IconBtn title="Start" onClick={onStart} disabled={busy} cls="text-green-400 hover:bg-green-400/10"><Play className="w-4 h-4" /></IconBtn>
           )}
+          <IconBtn title="Reset & re-dial (mark all contacts pending again)" onClick={onReset} disabled={busy} cls="text-blue-400 hover:bg-blue-400/10"><RotateCcw className="w-4 h-4" /></IconBtn>
 
           <div className="w-px h-4 bg-gray-700 mx-1" />
 

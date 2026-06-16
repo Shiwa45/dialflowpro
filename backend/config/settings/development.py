@@ -7,6 +7,9 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
+# Ensure Daphne runs when using manage.py runserver
+INSTALLED_APPS = ['daphne'] + INSTALLED_APPS
+
 # Security (relaxed for development)
 SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = False
@@ -30,9 +33,10 @@ REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = [
 # Email (console backend for development)
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-# Celery (eager execution for development - no async)
+# Celery — use solo pool on Windows (prefork/billiard semaphores fail on Win)
 CELERY_TASK_ALWAYS_EAGER = env.bool('CELERY_TASK_ALWAYS_EAGER', default=False)
 CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_WORKER_POOL = 'solo'
 
 # Debug Toolbar (optional)
 if env.bool('USE_DEBUG_TOOLBAR', default=False):
@@ -46,5 +50,17 @@ LOGGING['loggers']['django']['level'] = 'DEBUG'
 LOGGING['loggers']['apps'] = {
     'handlers': ['console'],
     'level': 'DEBUG',
+    'propagate': False,
+}
+# Silence SQL query logging — too noisy (Celery Beat polls DB every 5 s)
+LOGGING['loggers']['django.db.backends'] = {
+    'handlers': ['console'],
+    'level': 'WARNING',
+    'propagate': False,
+}
+# Silence Daphne's per-frame WebSocket debug logs (heartbeat noise)
+LOGGING['loggers']['daphne'] = {
+    'handlers': ['console'],
+    'level': 'WARNING',
     'propagate': False,
 }

@@ -7,6 +7,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+import json
 import logging
 from .models import Callrequest, VoIPCall
 from .constants import CallrequestStatus, CallrequestType, AmdStatus, CallDisposition
@@ -16,14 +17,35 @@ from apps.dialer_campaign.constants import SubscriberStatus
 logger = logging.getLogger(__name__)
 
 
+def _params(request):
+    """Read params from a JSON body (Lua http_post) or form-encoded POST."""
+    ctype = (request.content_type or '').lower()
+    if 'application/json' in ctype:
+        try:
+            return json.loads(request.body or b'{}')
+        except (ValueError, TypeError):
+            return {}
+    return request.POST
+
+
 @csrf_exempt
 @require_POST
 def hangup_webhook(request):
     """
-    FreeSWITCH hangup webhook.
-    
+    FreeSWITCH hangup webhook — wraps the real handler in the correct tenant
+    schema (FreeSWITCH posts ?tenant_schema=... since it has no tenant context).
+    """
+    from django_tenants.utils import schema_context
+    data = _params(request)
+    tenant_schema = data.get('tenant_schema', '') or 'public'
+    with schema_context(tenant_schema):
+        return _hangup_webhook_inner(request, data)
+
+
+def _hangup_webhook_inner(request, data):
+    """
     Called when a call ends. Creates VoIPCall CDR and updates Callrequest.
-    
+
     Expected POST data from FreeSWITCH:
     - callid (UUID)
     - request_uuid
@@ -38,13 +60,13 @@ def hangup_webhook(request):
     """
     try:
         # Parse FreeSWITCH data
-        callid = request.POST.get('callid')
-        request_uuid = request.POST.get('request_uuid')
-        
+        callid = data.get('callid')
+        request_uuid = data.get('request_uuid')
+
         if not callid or not request_uuid:
             logger.error("Missing callid or request_uuid in hangup webhook")
             return JsonResponse({'error': 'Missing required fields'}, status=400)
-        
+
         # Find Callrequest
         try:
             callrequest = Callrequest.objects.select_related(
@@ -53,30 +75,31 @@ def hangup_webhook(request):
         except Callrequest.DoesNotExist:
             logger.error(f"Callrequest not found: {request_uuid}")
             return JsonResponse({'error': 'Callrequest not found'}, status=404)
-        
+
         # Parse call data
-        duration = int(request.POST.get('duration', 0))
-        billsec = int(request.POST.get('billsec', 0))
-        disposition = request.POST.get('disposition', 'FAILED')
-        hangup_cause = request.POST.get('hangup_cause', '')
-        
+        duration = int(data.get('duration', 0) or 0)
+        billsec = int(data.get('billsec', 0) or 0)
+        disposition = data.get('disposition', 'FAILED')
+        hangup_cause = data.get('hangup_cause', '')
+        start_time = data.get('start_time')
+
         # Create VoIPCall CDR
         voipcall = VoIPCall.objects.create(
             callid=callid,
-            callerid=request.POST.get('callerid', ''),
+            callerid=data.get('callerid', ''),
             phone_number=callrequest.phone_number,
-            starting_date=parse_datetime(request.POST.get('start_time')) or timezone.now(),
+            starting_date=(parse_datetime(start_time) if start_time else None) or timezone.now(),
             duration=duration,
             billsec=billsec,
             disposition=disposition,
             hangup_cause=hangup_cause,
-            hangup_cause_q850=request.POST.get('hangup_cause_q850', ''),
+            hangup_cause_q850=data.get('hangup_cause_q850', ''),
             user=callrequest.user,
             callrequest=callrequest,
         )
-        
+
         # Update AMD status if present
-        amd_status = request.POST.get('amd_status')
+        amd_status = data.get('amd_status')
         if amd_status:
             amd_map = {'PERSON': AmdStatus.PERSON, 'MACHINE': AmdStatus.MACHINE, 'NOTSURE': AmdStatus.NOTSURE}
             voipcall.amd_status = amd_map.get(amd_status.upper())
@@ -118,8 +141,34 @@ def hangup_webhook(request):
                     subscriber.status = SubscriberStatus.FAIL
                     subscriber.save(update_fields=['status'])
         
+        # Move the serving agent into WRAP-UP (after-call work), NOT straight
+        # back to Waiting. They stay off the pacer (state != Waiting) until they
+        # submit a disposition, which sets them Waiting again (see consumer
+        # _save_disposition). Also push call_ended to the agent's desktop so the
+        # panel shows the wrap-up form when the softphone call disconnects.
+        agent_id = data.get('agent_id')
+        if agent_id:
+            from apps.callcenter.models import Agent
+            from apps.callcenter.constants import AgentState
+            Agent.objects.filter(id=agent_id).update(
+                state=AgentState.IDLE,          # = wrap-up / after-call work
+                last_bridge_end=timezone.now(),
+            )
+            try:
+                from channels.layers import get_channel_layer
+                from asgiref.sync import async_to_sync
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(f'agent_desktop_{agent_id}', {
+                    'type': 'call_ended',
+                    'call_id': callid,
+                    'duration': billsec,
+                    'hangup_cause': hangup_cause,
+                })
+            except Exception as exc:
+                logger.warning(f"Could not push call_ended to agent {agent_id}: {exc}")
+
         logger.info(f"Hangup processed: {callid}, disposition={disposition}")
-        
+
         return JsonResponse({
             'status': 'ok',
             'callid': callid,

@@ -74,13 +74,18 @@ class ContactImportSerializer(serializers.Serializer):
     )
     csv_file = serializers.FileField()
     skip_duplicates = serializers.BooleanField(default=True)
-    
+    # ISO 3166-1 alpha-2 country code used as fallback region when numbers
+    # have no + prefix (e.g. "PK" turns 03001234567 → +923001234567)
+    country_code = serializers.CharField(
+        max_length=2, default='', allow_blank=True, required=False
+    )
+
     def validate_csv_file(self, value):
-        """Validate CSV file"""
         if not value.name.endswith('.csv'):
             raise serializers.ValidationError('File must be a CSV')
-        
-        if value.size > 10 * 1024 * 1024:  # 10MB limit
+        if value.size > 10 * 1024 * 1024:
             raise serializers.ValidationError('File size must be under 10MB')
-        
         return value
+
+    def validate_country_code(self, value):
+        return value.upper().strip() if value else ''

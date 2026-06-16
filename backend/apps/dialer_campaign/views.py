@@ -47,9 +47,10 @@ class CampaignViewSet(viewsets.ModelViewSet):
         campaign.has_been_started = True
         campaign.save(update_fields=['status', 'has_been_started'])
         
-        # Trigger subscriber collection
-        collect_subscriber.delay(campaign.id)
-        
+        # Pass tenant schema so task runs in the correct DB schema
+        tenant_schema = getattr(request.user.tenant, 'schema_name', '')
+        collect_subscriber.delay(campaign.id, tenant_schema)
+
         return Response({'status': 'started', 'campaign': CampaignSerializer(campaign).data})
     
     @action(detail=True, methods=['post'])
@@ -67,6 +68,36 @@ class CampaignViewSet(viewsets.ModelViewSet):
         campaign.status = CampaignStatus.ABORT
         campaign.save(update_fields=['status'])
         return Response({'status': 'stopped'})
+
+    @action(detail=True, methods=['post'])
+    def reset(self, request, pk=None):
+        """
+        Reset the campaign for re-dialing: all subscribers (FAIL/COMPLETED/
+        IN_PROCESS) go back to PENDING and stuck CALLING callrequests are
+        cleared. Useful for re-running a finished campaign or repeat testing.
+        """
+        from .models import Subscriber
+        from .constants import SubscriberStatus
+        from apps.dialer_cdr.models import Callrequest
+        from apps.dialer_cdr.constants import CallrequestStatus
+
+        campaign = self.get_object()
+        subs = Subscriber.objects.filter(campaign=campaign).exclude(
+            status=SubscriberStatus.PENDING
+        ).update(status=SubscriberStatus.PENDING, count_attempt=0)
+        crs = Callrequest.objects.filter(
+            campaign=campaign, status=CallrequestStatus.CALLING
+        ).update(status=CallrequestStatus.FAILURE)
+
+        pending = Subscriber.objects.filter(
+            campaign=campaign, status=SubscriberStatus.PENDING
+        ).count()
+        return Response({
+            'status': 'reset',
+            'subscribers_reset': subs,
+            'calls_cleared': crs,
+            'pending_now': pending,
+        })
 
 
 class SubscriberViewSet(viewsets.ReadOnlyModelViewSet):
