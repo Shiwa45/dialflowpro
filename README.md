@@ -180,7 +180,6 @@ docker-compose run --rm api pytest --cov=apps --cov-report=html
 
 ## Contributing
 
-This is a from-scratch rebuild. All code is new - no code copied from the original Newfies-Dialer.
 
 ## License
 
